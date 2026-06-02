@@ -1,0 +1,33 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.dependencies]
+thiserror = "2.0"
+async-trait = "0.1"
+tokio = { version = "1.52", features = ["full"] }
+futures-core = "0.3"
+futures-util = "0.3"
+reqwest = { version = "0.13", features = ["json", "stream"] }
+bytes = "1.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio-util = { version = "0.7", features = ["codec"] }
+tokio-stream = "0.1"
+async-stream = "0.3"
+anyhow = "1.0"
+toasty = { version = "0.6", features = ["sqlite", "serde", "jiff"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+jiff = { version = "0.2", features = ["serde"] }
+uuid = { version = "1.23" , features = ["v4"] }
+dashmap = "6.0"
+dirs = "6.0"
+axum = { version = "0.8", features = ["json", "macros", "ws"] }
+clap = { version = "4.6", features = ["derive"] }
+boxcar = "0.2"
+toml = "1.1"
+nekocode-core = { path = "crates/nekocode-core" }
+nekocode-provider = { path = "crates/nekocode-provider" }
+nekocode-entities = { path = "crates/nekocode-entities" }
+nekocode-types = { path = "crates/nekocode-types" }

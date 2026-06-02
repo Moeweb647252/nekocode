@@ -1,0 +1,10 @@
+[package]
+name = "nekocode-entities"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+toasty.workspace = true
+serde.workspace = true
+jiff.workspace = true
+nekocode-types.workspace = true
