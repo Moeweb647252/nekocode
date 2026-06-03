@@ -5,19 +5,44 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     pub auth: AuthenticationConfig,
-    pub providers: Vec<ProviderConfig>,
+    pub models: Vec<ModelConfig>,
+    pub default_model: String,
     pub server: ServerConfig,
     pub app: AppConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum ProviderConfig {}
+pub struct ModelConfig {
+    pub name: String,
+    #[serde(flatten)]
+    pub data: ModelConfigType,
+}
 
-impl Default for ProviderConfig {
-    fn default() -> Self {
-        todo!()
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ModelConfigType {
+    #[serde(rename = "deepseek")]
+    DeepSeek,
+}
+
+pub struct DeepSeekConfig {
+    pub api_base: String,
+    pub api_key: String,
+    pub model: String,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
+    pub max_tokens: Option<usize>,
+    pub context_window_size: Option<usize>,
+    pub endpoint: Option<DeepSeekEndpoint>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum DeepSeekEndpoint {
+    #[serde(rename = "anthropic")]
+    Anthropic,
+    #[serde(rename = "openai")]
+    OpenAI,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

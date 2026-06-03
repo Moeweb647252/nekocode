@@ -5,6 +5,7 @@ use nekocode_core::{
     },
     types::GenerateRequest,
 };
+use nekocode_types::config::{DeepSeekConfig, DeepSeekEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -23,33 +24,13 @@ use crate::{
     sse::EventSource,
 };
 
-pub struct Config {
-    pub api_base: String,
-    pub api_key: String,
-    pub model: String,
-    pub temperature: Option<f32>,
-    pub top_p: Option<f32>,
-    pub top_k: Option<u32>,
-    pub max_tokens: Option<usize>,
-    pub context_window_size: Option<usize>,
-    pub endpoint: Option<DeepSeekEndpoint>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub enum DeepSeekEndpoint {
-    #[serde(rename = "anthropic")]
-    Anthropic,
-    #[serde(rename = "openai")]
-    OpenAI,
-}
-
 pub struct DeepSeek {
     client: reqwest::Client,
-    config: Config,
+    config: DeepSeekConfig,
 }
 
 impl DeepSeek {
-    pub fn from_config(config: Config) -> Self {
+    pub fn from_config(config: DeepSeekConfig) -> Self {
         DeepSeek {
             client: reqwest::Client::new(),
             config,
@@ -64,13 +45,14 @@ impl Provider for DeepSeek {
         request: GenerateRequest,
         sender: UnboundedSender<ProviderEvent>,
     ) -> Result<ProviderResponse, ProviderError> {
-        match self.config.endpoint.as_ref().unwrap_or(&DeepSeekEndpoint::OpenAI) {
-            DeepSeekEndpoint::Anthropic => {
-                self.stream_generate_anthropic(request, sender).await
-            }
-            DeepSeekEndpoint::OpenAI => {
-                self.stream_generate_openai(request, sender).await
-            }
+        match self
+            .config
+            .endpoint
+            .as_ref()
+            .unwrap_or(&DeepSeekEndpoint::OpenAI)
+        {
+            DeepSeekEndpoint::Anthropic => self.stream_generate_anthropic(request, sender).await,
+            DeepSeekEndpoint::OpenAI => self.stream_generate_openai(request, sender).await,
         }
     }
 
@@ -126,12 +108,14 @@ impl DeepSeek {
     fn build_openai_request(&self, request: &GenerateRequest) -> ChatCompletionRequest {
         let mut messages: Vec<ChatCompletionMessageParam> = Vec::new();
         if let Some(system) = &request.system_prompt {
-            messages.push(ChatCompletionMessageParam::ChatCompletionSystemMessageParam(
-                ChatCompletionSystemMessageParam {
-                    content: system.clone(),
-                    name: None,
-                },
-            ));
+            messages.push(
+                ChatCompletionMessageParam::ChatCompletionSystemMessageParam(
+                    ChatCompletionSystemMessageParam {
+                        content: system.clone(),
+                        name: None,
+                    },
+                ),
+            );
         }
         for msg in &request.messages {
             let param = convert_to_openai_message(msg);
@@ -240,33 +224,27 @@ fn convert_to_openai_message(msg: &Message) -> ChatCompletionMessageParam {
         MessageContent::Text(text) => text.clone(),
     };
     match msg.role {
-        Role::User => {
-            ChatCompletionMessageParam::ChatCompletionUserMessageParam(
-                ChatCompletionUserMessageParam {
-                    content,
-                    name: None,
-                },
-            )
-        }
-        Role::Assistant => {
-            ChatCompletionMessageParam::ChatCompletionAssistantMessageParam(
-                ChatCompletionAssistantMessageParam {
-                    content,
-                    name: None,
-                    refusal: None,
-                    tool_calls: None,
-                    prefix: None,
-                    reasoning_content: msg.reasoning_content.clone(),
-                },
-            )
-        }
-        Role::Custom(_) => {
-            ChatCompletionMessageParam::ChatCompletionSystemMessageParam(
-                ChatCompletionSystemMessageParam {
-                    content,
-                    name: None,
-                },
-            )
-        }
+        Role::User => ChatCompletionMessageParam::ChatCompletionUserMessageParam(
+            ChatCompletionUserMessageParam {
+                content,
+                name: None,
+            },
+        ),
+        Role::Assistant => ChatCompletionMessageParam::ChatCompletionAssistantMessageParam(
+            ChatCompletionAssistantMessageParam {
+                content,
+                name: None,
+                refusal: None,
+                tool_calls: None,
+                prefix: None,
+                reasoning_content: msg.reasoning_content.clone(),
+            },
+        ),
+        Role::Custom(_) => ChatCompletionMessageParam::ChatCompletionSystemMessageParam(
+            ChatCompletionSystemMessageParam {
+                content,
+                name: None,
+            },
+        ),
     }
 }
