@@ -1,12 +1,10 @@
 use nekocode_core::{
     provider::{
-        GenerateOption, Message, MessageContent, Provider, ProviderError, ProviderEvent,
-        ProviderResponse, Role,
+        Message, MessageContent, Provider, ProviderError, ProviderEvent, ProviderResponse, Role,
     },
     types::GenerateRequest,
 };
 use nekocode_types::config::{DeepSeekConfig, DeepSeekEndpoint};
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
@@ -63,21 +61,6 @@ impl Provider for DeepSeek {
 }
 
 impl DeepSeek {
-    /// Build the effective options by merging config defaults with per-request options.
-    fn effective_options(&self, options: &GenerateOption) -> GenerateOption {
-        GenerateOption {
-            model: if options.model.is_empty() {
-                self.config.model.clone()
-            } else {
-                options.model.clone()
-            },
-            max_tokens: options.max_tokens.or(self.config.max_tokens),
-            top_p: options.top_p.or(self.config.top_p),
-            top_k: options.top_k.or(self.config.top_k),
-            temperature: options.temperature.or(self.config.temperature),
-        }
-    }
-
     // ── OpenAI-compatible endpoint ──
 
     async fn stream_generate_openai(
@@ -121,14 +104,13 @@ impl DeepSeek {
             let param = convert_to_openai_message(msg);
             messages.push(param);
         }
-        let opts = self.effective_options(&request.options);
         ChatCompletionRequest {
-            model: opts.model,
+            model: self.config.model.clone(),
             messages,
             stream: true,
-            temperature: opts.temperature,
-            top_p: opts.top_p,
-            max_tokens: opts.max_tokens,
+            temperature: self.config.temperature,
+            top_p: self.config.top_p,
+            max_tokens: self.config.max_tokens,
             stop: None,
         }
     }
@@ -162,7 +144,6 @@ impl DeepSeek {
     }
 
     fn build_anthropic_body(&self, request: &GenerateRequest) -> serde_json::Value {
-        let opts = self.effective_options(&request.options);
         let messages: Vec<serde_json::Value> = request
             .messages
             .iter()
@@ -196,23 +177,23 @@ impl DeepSeek {
             .collect();
 
         let mut body = serde_json::json!({
-            "model": opts.model,
+            "model": self.config.model,
             "messages": messages,
             "stream": true,
         });
         if let Some(system) = &request.system_prompt {
             body["system"] = serde_json::json!(system);
         }
-        if let Some(max_tokens) = opts.max_tokens {
+        if let Some(max_tokens) = self.config.max_tokens {
             body["max_tokens"] = serde_json::json!(max_tokens);
         }
-        if let Some(temperature) = opts.temperature {
+        if let Some(temperature) = self.config.temperature {
             body["temperature"] = serde_json::json!(temperature);
         }
-        if let Some(top_p) = opts.top_p {
+        if let Some(top_p) = self.config.top_p {
             body["top_p"] = serde_json::json!(top_p);
         }
-        if let Some(top_k) = opts.top_k {
+        if let Some(top_k) = self.config.top_k {
             body["top_k"] = serde_json::json!(top_k);
         }
         body

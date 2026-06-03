@@ -39,15 +39,6 @@ pub fn collect_db_messages(messages: Vec<nekocode_entities::message::Message>) -
     todo!()
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct GenerateOption {
-    pub model: String,
-    pub max_tokens: Option<usize>,
-    pub top_p: Option<f32>,
-    pub top_k: Option<u32>,
-    pub temperature: Option<f32>,
-}
-
 #[derive(Debug, Clone)]
 pub enum Role {
     User,

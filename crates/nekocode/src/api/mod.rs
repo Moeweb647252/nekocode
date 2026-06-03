@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod error;
 pub mod generate;
+pub mod middleware;
 pub mod thread;
 
 use axum::{

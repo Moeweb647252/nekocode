@@ -40,6 +40,9 @@ pub async fn get_thread(
             messages,
         })
     } else {
-        Err(ApiError::ItemNotFound)
+        Err(ApiError::ItemNotFound(format!(
+            "Thread not found: {}",
+            payload.id
+        )))
     }
 }

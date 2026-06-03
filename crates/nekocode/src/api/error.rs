@@ -14,8 +14,8 @@ pub enum ApiError {
     ThreadNotActivated,
     #[error("Thread generating")]
     ThreadGenerating,
-    #[error("Item not found")]
-    ItemNotFound,
+    #[error("Item not found: {0}")]
+    ItemNotFound(String),
 
     #[error("Unauthorized")]
     Unauthorized,
@@ -31,7 +31,7 @@ impl ApiError {
             ApiError::ThreadAlreadyActivated => "thread_already_activated",
             ApiError::ThreadNotActivated => "thread_not_activated",
             ApiError::ThreadGenerating => "thread_generating",
-            ApiError::ItemNotFound => "item_not_found",
+            ApiError::ItemNotFound(_) => "item_not_found",
             ApiError::Unauthorized => "unauthorized",
             ApiError::Other(_) => "other",
         }

@@ -22,9 +22,10 @@ pub struct ModelConfig {
 #[serde(tag = "type")]
 pub enum ModelConfigType {
     #[serde(rename = "deepseek")]
-    DeepSeek,
+    DeepSeek(DeepSeekConfig),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeepSeekConfig {
     pub api_base: String,
     pub api_key: String,
@@ -37,7 +38,7 @@ pub struct DeepSeekConfig {
     pub endpoint: Option<DeepSeekEndpoint>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DeepSeekEndpoint {
     #[serde(rename = "anthropic")]
     Anthropic,

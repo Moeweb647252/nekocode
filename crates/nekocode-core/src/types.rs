@@ -1,10 +1,9 @@
-use crate::provider::{GenerateOption, Message, ProviderResponse};
+use crate::provider::{Message, ProviderResponse};
 
 #[derive(Debug, Clone, Default)]
 pub struct GenerateRequest {
     pub messages: Vec<Message>,
     pub system_prompt: Option<String>,
-    pub options: GenerateOption,
 }
 
 pub struct GenerateResponse {}

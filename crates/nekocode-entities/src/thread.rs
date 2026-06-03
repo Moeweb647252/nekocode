@@ -11,6 +11,7 @@ pub struct Thread {
 
     pub title: Option<String>,
     pub working_directory: String,
+    pub model: String,
     pub generate_start_msg_id: Option<u64>,
 
     #[update(jiff::Timestamp::now())]

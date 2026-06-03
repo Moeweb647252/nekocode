@@ -14,17 +14,17 @@ pub enum AgentControlFlow {
 pub trait Middleware: Send + Sync {
     async fn before_generate(
         &self,
-        request: &mut GenerateRequest,
-        tool_registry: &ToolRegistry,
+        _: &mut GenerateRequest,
+        _: &ToolRegistry,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
 
     async fn after_generate(
         &self,
-        request: &GenerateRequest,
-        response: &GenerateResponse,
-        control_flow: &mut AgentControlFlow,
+        _: &GenerateRequest,
+        _: &GenerateResponse,
+        _: &mut AgentControlFlow,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }

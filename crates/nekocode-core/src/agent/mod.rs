@@ -27,18 +27,13 @@ pub struct RunLoopSummary {}
 
 #[derive(Clone)]
 pub struct Agent {
-    thread_id: u64,
-    db: toasty::Db,
-    middlewares: Arc<Vec<Box<dyn Middleware>>>,
-    provider: Arc<dyn crate::provider::Provider>,
-    generate_option: crate::provider::GenerateOption,
+    pub thread_id: u64,
+    pub db: toasty::Db,
+    pub middlewares: Arc<Vec<Box<dyn Middleware>>>,
+    pub provider: Arc<dyn crate::provider::Provider>,
 }
 
 impl Agent {
-    pub fn new() -> Self {
-        todo!()
-    }
-
     pub async fn run_loop(
         &self,
         input: String,
@@ -83,7 +78,6 @@ impl Agent {
         };
         let mut request = GenerateRequest {
             messages: collect_db_messages(messages),
-            options: self.generate_option.clone(),
             ..Default::default()
         };
         loop {
