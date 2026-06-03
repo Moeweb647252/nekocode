@@ -6,12 +6,23 @@ use crate::tool::{ToolCall, ToolCallResult};
 #[serde(tag = "type")]
 pub enum Message {
     User(MessageContent),
-    AssistantMessageStart,
-    Assistant(MessageContent),
-    AssistantReasoning(String),
+    Assistant(AssistantMessage),
     MiddlewareMessage(MessageContent),
-    TooCall(ToolCall),
     ToolCallResult(ToolCallResult),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantMessage {
+    pub blocks: Vec<AssistantContentBlock>,
+    pub reasoning: Option<String>,
+    pub tool_calls: Vec<ToolCall>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AssistantContentBlock {
+    ToolCall(ToolCall),
+    Reasoning(String),
+    Text(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

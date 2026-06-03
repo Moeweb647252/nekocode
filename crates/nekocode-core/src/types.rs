@@ -1,4 +1,6 @@
-use crate::provider::{Message, ProviderResponse};
+use nekocode_types::generate::Message;
+
+use crate::provider::ProviderResponse;
 
 #[derive(Debug, Clone, Default)]
 pub struct GenerateRequest {

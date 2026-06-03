@@ -1,8 +1,7 @@
 use nekocode_types::{
-    generate,
-    tool::{ToolCall, ToolCallResult},
+    generate::{self, Message},
+    tool::ToolCall,
 };
-use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::types::GenerateRequest;
@@ -29,20 +28,10 @@ pub trait Provider: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct Message {
-    pub role: Role,
-    pub content: MessageContent,
-    pub reasoning_content: Option<String>,
-}
-
-pub fn collect_db_messages(messages: Vec<nekocode_entities::message::Message>) -> Vec<Message> {
-    todo!()
-}
-
-#[derive(Debug, Clone)]
 pub enum Role {
     User,
     Assistant,
+    Tool,
     Custom(String),
 }
 
@@ -51,7 +40,17 @@ pub enum MessageContent {
     Text(String),
 }
 
-pub struct ProviderResponse {}
+pub struct ProviderResponse {
+    pub message: Message,
+    pub usage: ProviderUsage,
+}
+
+pub struct ProviderUsage {
+    pub total_input: usize,
+    pub total_output: usize,
+    pub cache_hit: bool,
+    pub cache_miss: usize,
+}
 
 pub enum ProviderEvent {
     MessageStart,

@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateMessageRequest {
-    pub role: Role,
-    pub content: ContentBlockParam,
+    pub content: Vec<MessageParam>,
     pub model: String,
     pub metadata: Option<Metadata>,
     pub ouput_config: Option<OutputConfig>,
@@ -18,7 +17,17 @@ pub struct CreateMessageRequest {
     pub top_k: Option<u32>,
     pub max_tokens: Option<usize>,
 }
-
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageParam {
+    pub role: Role,
+    pub content: MessageContentParam,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MessageContentParam {
+    String(String),
+    Blocks(Vec<ContentBlockParam>),
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Role {
     #[serde(rename = "user")]

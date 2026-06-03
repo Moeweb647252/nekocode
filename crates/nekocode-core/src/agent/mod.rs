@@ -12,12 +12,17 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::{
     agent::{error::AgentError, tool::ToolRegistry},
     middleware::{AgentControlFlow, Middleware},
-    provider::collect_db_messages,
     types::GenerateRequest,
 };
 
 #[derive(Clone, Serialize)]
-pub enum AgentEvent {
+pub struct AgentEvent {
+    pub index: usize,
+    pub data: AgentEventType,
+}
+
+#[derive(Clone, Serialize)]
+pub enum AgentEventType {
     Message(Message),
     StreamEvent(StreamEvent),
 }
@@ -39,6 +44,7 @@ impl Agent {
         input: String,
         sender: UnboundedSender<AgentEvent>,
     ) -> Result<RunLoopSummary, AgentError> {
+        let mut index = 0;
         let mut db = self.db.clone();
         let thread = query!(Thread FILTER .id == #(self.thread_id))
             .first()
@@ -77,7 +83,7 @@ impl Agent {
             )));
         };
         let mut request = GenerateRequest {
-            messages: collect_db_messages(messages),
+            messages: messages.into_iter().map(|m| m.content).collect(),
             ..Default::default()
         };
         loop {
@@ -87,16 +93,21 @@ impl Agent {
                     .before_generate(&mut request, &mut tool_registry)
                     .await?;
             }
+
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let provider = self.provider.clone();
             let request_clone = request.clone();
             let handle =
                 tokio::spawn(async move { provider.stream_generate(request_clone, tx).await });
             while let Some(event) = rx.recv().await {
-                let agent_event = AgentEvent::StreamEvent((&event).into());
+                let agent_event = AgentEvent {
+                    index,
+                    data: AgentEventType::StreamEvent((&event).into()),
+                };
                 sender
                     .send(agent_event)
                     .map_err(|e| AgentError::Other(anyhow!("error sending agent event {e}")))?;
+                index += 1;
             }
             let response = handle
                 .await

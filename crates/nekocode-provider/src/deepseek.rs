@@ -1,15 +1,23 @@
 use nekocode_core::{
-    provider::{
-        Message, MessageContent, Provider, ProviderError, ProviderEvent, ProviderResponse, Role,
-    },
+    provider::{Provider, ProviderError, ProviderEvent, ProviderResponse, ProviderUsage},
     types::GenerateRequest,
 };
-use nekocode_types::config::{DeepSeekConfig, DeepSeekEndpoint};
+use nekocode_types::{
+    config::{DeepSeekConfig, DeepSeekEndpoint},
+    generate::{AssistantContentBlock, AssistantMessage, Message, MessageContent},
+    tool::{ToolCall, ToolCallResult, ToolCallResultInner},
+};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     parser::{
-        anthropic::AnthropicStream,
+        anthropic::{
+            AnthropicStream,
+            types::{
+                ContentBlockParam, CreateMessageRequest, MessageContentParam, MessageParam,
+                Role as AnthropicRole, TextBlockParam,
+            },
+        },
         openaiv1::{
             OpenAIV1Stream,
             types::{
@@ -85,7 +93,15 @@ impl DeepSeek {
         while let Some(event) = stream.next_event().await? {
             sender.send(event).ok();
         }
-        Ok(ProviderResponse {})
+        Ok(ProviderResponse {
+            message: Message::User(MessageContent::Text(String::new())),
+            usage: ProviderUsage {
+                total_input: 0,
+                total_output: 0,
+                cache_hit: false,
+                cache_miss: 0,
+            },
+        })
     }
 
     fn build_openai_request(&self, request: &GenerateRequest) -> ChatCompletionRequest {
@@ -140,92 +156,223 @@ impl DeepSeek {
         while let Some(event) = stream.next_event().await? {
             sender.send(event).ok();
         }
-        Ok(ProviderResponse {})
+        Ok(ProviderResponse {
+            message: Message::User(MessageContent::Text(String::new())),
+            usage: ProviderUsage {
+                total_input: 0,
+                total_output: 0,
+                cache_hit: false,
+                cache_miss: 0,
+            },
+        })
     }
 
-    fn build_anthropic_body(&self, request: &GenerateRequest) -> serde_json::Value {
-        let messages: Vec<serde_json::Value> = request
+    fn build_anthropic_body(&self, request: &GenerateRequest) -> CreateMessageRequest {
+        let content: Vec<MessageParam> = request
             .messages
             .iter()
-            .map(|msg| {
-                let role_str = match msg.role {
-                    Role::User => "user",
-                    Role::Assistant => "assistant",
-                    Role::Custom(ref s) => s.as_str(),
-                };
-                let mut content_blocks: Vec<serde_json::Value> = Vec::new();
-                match &msg.content {
-                    MessageContent::Text(text) => {
-                        content_blocks.push(serde_json::json!({
-                            "type": "text",
-                            "text": text,
-                        }));
-                    }
-                }
-                if let Some(reasoning) = &msg.reasoning_content {
-                    content_blocks.push(serde_json::json!({
-                        "type": "thinking",
-                        "thinking": reasoning,
-                        "signature": "",
-                    }));
-                }
-                serde_json::json!({
-                    "role": role_str,
-                    "content": content_blocks,
-                })
-            })
+            .map(|msg| to_anthropic_message(msg))
             .collect();
 
-        let mut body = serde_json::json!({
-            "model": self.config.model,
-            "messages": messages,
-            "stream": true,
-        });
-        if let Some(system) = &request.system_prompt {
-            body["system"] = serde_json::json!(system);
+        CreateMessageRequest {
+            content,
+            model: self.config.model.clone(),
+            metadata: None,
+            ouput_config: None,
+            stop_sequences: None,
+            stream: true,
+            system: request.system_prompt.clone(),
+            temperature: self.config.temperature,
+            thinking: None,
+            tool_choice: None,
+            tools: None,
+            top_p: self.config.top_p,
+            top_k: self.config.top_k,
+            max_tokens: self.config.max_tokens,
         }
-        if let Some(max_tokens) = self.config.max_tokens {
-            body["max_tokens"] = serde_json::json!(max_tokens);
-        }
-        if let Some(temperature) = self.config.temperature {
-            body["temperature"] = serde_json::json!(temperature);
-        }
-        if let Some(top_p) = self.config.top_p {
-            body["top_p"] = serde_json::json!(top_p);
-        }
-        if let Some(top_k) = self.config.top_k {
-            body["top_k"] = serde_json::json!(top_k);
-        }
-        body
+    }
+}
+
+// ── Message conversion helpers ──
+
+fn message_text(content: &MessageContent) -> String {
+    match content {
+        MessageContent::Text(text) => text.clone(),
     }
 }
 
 fn convert_to_openai_message(msg: &Message) -> ChatCompletionMessageParam {
-    let content = match &msg.content {
-        MessageContent::Text(text) => text.clone(),
-    };
-    match msg.role {
-        Role::User => ChatCompletionMessageParam::ChatCompletionUserMessageParam(
+    match msg {
+        Message::User(content) => ChatCompletionMessageParam::ChatCompletionUserMessageParam(
             ChatCompletionUserMessageParam {
-                content,
+                content: message_text(content),
                 name: None,
             },
         ),
-        Role::Assistant => ChatCompletionMessageParam::ChatCompletionAssistantMessageParam(
-            ChatCompletionAssistantMessageParam {
-                content,
-                name: None,
-                refusal: None,
-                tool_calls: None,
-                prefix: None,
-                reasoning_content: msg.reasoning_content.clone(),
-            },
-        ),
-        Role::Custom(_) => ChatCompletionMessageParam::ChatCompletionSystemMessageParam(
-            ChatCompletionSystemMessageParam {
-                content,
-                name: None,
-            },
-        ),
+        Message::Assistant(AssistantMessage {
+            blocks,
+            reasoning,
+            tool_calls,
+        }) => {
+            let content = blocks
+                .iter()
+                .filter_map(|b| match b {
+                    AssistantContentBlock::Text(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            let extra_reasoning: Vec<_> = blocks
+                .iter()
+                .filter_map(|b| match b {
+                    AssistantContentBlock::Reasoning(r) => Some(r.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let combined_reasoning: Vec<&str> = reasoning
+                .as_deref()
+                .into_iter()
+                .chain(extra_reasoning)
+                .collect();
+            let reasoning_content = if combined_reasoning.is_empty() {
+                None
+            } else {
+                Some(combined_reasoning.join(""))
+            };
+            ChatCompletionMessageParam::ChatCompletionAssistantMessageParam(
+                ChatCompletionAssistantMessageParam {
+                    content,
+                    name: None,
+                    refusal: None,
+                    tool_calls: convert_tool_calls(tool_calls),
+                    prefix: None,
+                    reasoning_content,
+                },
+            )
+        }
+        Message::MiddlewareMessage(content) => {
+            ChatCompletionMessageParam::ChatCompletionUserMessageParam(
+                ChatCompletionUserMessageParam {
+                    content: message_text(content),
+                    name: None,
+                },
+            )
+        }
+        Message::ToolCallResult(result) => {
+            ChatCompletionMessageParam::ChatCompletionToolMessageParam(
+                crate::parser::openaiv1::types::ChatCompletionToolMessageParam {
+                    content: tool_result_text(result),
+                    tool_call_id: result.id.clone(),
+                },
+            )
+        }
+    }
+}
+
+fn convert_tool_calls(
+    tool_calls: &[ToolCall],
+) -> Option<Vec<crate::parser::openaiv1::types::ChatCompletionMessageToolCall>> {
+    if tool_calls.is_empty() {
+        return None;
+    }
+    Some(
+        tool_calls
+            .iter()
+            .map(|tc| {
+                crate::parser::openaiv1::types::ChatCompletionMessageToolCall::ChatCompletionMessageFunctionToolCall(
+                    crate::parser::openaiv1::types::ChatCompletionMessageFunctionToolCall {
+                        name: tc.name.clone(),
+                        arguments: tc.args.to_string(),
+                    },
+                )
+            })
+            .collect(),
+    )
+}
+
+fn tool_result_text(result: &ToolCallResult) -> String {
+    match &result.result {
+        ToolCallResultInner::Success(val) => val.to_string(),
+        ToolCallResultInner::Error(err) => err.clone(),
+    }
+}
+
+fn to_anthropic_message(msg: &Message) -> MessageParam {
+    match msg {
+        Message::User(content) => MessageParam {
+            role: AnthropicRole::User,
+            content: MessageContentParam::Blocks(vec![ContentBlockParam::TextBlockParam(
+                TextBlockParam {
+                    text: message_text(content),
+                },
+            )]),
+        },
+        Message::Assistant(AssistantMessage {
+            blocks: assistant_blocks,
+            reasoning,
+            tool_calls,
+        }) => {
+            let mut blocks: Vec<ContentBlockParam> = Vec::new();
+            for block in assistant_blocks {
+                match block {
+                    AssistantContentBlock::Text(text) => {
+                        blocks.push(ContentBlockParam::TextBlockParam(TextBlockParam {
+                            text: text.clone(),
+                        }));
+                    }
+                    AssistantContentBlock::Reasoning(r) => {
+                        blocks.push(ContentBlockParam::ThinkingBlockParam {
+                            signature: String::new(),
+                            thinking: r.clone(),
+                        });
+                    }
+                    AssistantContentBlock::ToolCall(tc) => {
+                        blocks.push(ContentBlockParam::ToolUseBlockParam(
+                            crate::parser::anthropic::types::ToolUseBlockParam {
+                                id: tc.id.clone(),
+                                name: tc.name.clone(),
+                                input: tc.args.clone(),
+                            },
+                        ));
+                    }
+                }
+            }
+            if let Some(reasoning) = reasoning {
+                blocks.push(ContentBlockParam::ThinkingBlockParam {
+                    signature: String::new(),
+                    thinking: reasoning.clone(),
+                });
+            }
+            for tc in tool_calls {
+                blocks.push(ContentBlockParam::ToolUseBlockParam(
+                    crate::parser::anthropic::types::ToolUseBlockParam {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        input: tc.args.clone(),
+                    },
+                ));
+            }
+            MessageParam {
+                role: AnthropicRole::Assistant,
+                content: MessageContentParam::Blocks(blocks),
+            }
+        }
+        Message::MiddlewareMessage(content) => MessageParam {
+            role: AnthropicRole::User,
+            content: MessageContentParam::Blocks(vec![ContentBlockParam::TextBlockParam(
+                TextBlockParam {
+                    text: message_text(content),
+                },
+            )]),
+        },
+        Message::ToolCallResult(result) => MessageParam {
+            role: AnthropicRole::User,
+            content: MessageContentParam::Blocks(vec![ContentBlockParam::ToolResultBlockParam(
+                crate::parser::anthropic::types::ToolResultBlockParam {
+                    tool_use_id: result.id.clone(),
+                    content: vec![],
+                },
+            )]),
+        },
     }
 }
