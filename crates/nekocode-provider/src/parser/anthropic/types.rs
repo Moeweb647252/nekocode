@@ -16,6 +16,7 @@ pub struct CreateMessageRequest {
     pub tools: Option<Vec<Tool>>,
     pub top_p: Option<f32>,
     pub top_k: Option<u32>,
+    pub max_tokens: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,19 +175,19 @@ pub enum RawContentBlockDelta {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextDelta {
-    text: String,
+    pub text: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InputJsonDelta {
-    partial_json: String,
+    pub partial_json: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinkingDelta {
-    thinking: String,
+    pub thinking: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignatureDelta {
-    signature: String,
+    pub signature: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StopReason {

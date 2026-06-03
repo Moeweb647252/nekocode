@@ -1,3 +1,3 @@
 mod deepseek;
-mod parser;
+pub mod parser;
 mod sse;

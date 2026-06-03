@@ -1,2 +1,2 @@
-mod anthropic;
-mod openaiv1;
+pub mod anthropic;
+pub mod openaiv1;

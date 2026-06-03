@@ -18,3 +18,4 @@ tokio-stream.workspace = true
 async-stream.workspace = true
 anyhow.workspace = true
 nekocode-core.workspace = true
+nekocode-types.workspace = true

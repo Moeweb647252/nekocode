@@ -67,11 +67,8 @@ pub enum ProviderEvent {
     MessageEnd,
     Content(String),
     ReasoningContent(String),
-    ToolCall(ProviderToolCall),
-    ToolCallResult(ToolCallResult),
+    ToolCall(ToolCall),
 }
-
-pub struct ProviderToolCall {}
 
 impl Into<generate::StreamEvent> for &ProviderEvent {
     fn into(self) -> generate::StreamEvent {

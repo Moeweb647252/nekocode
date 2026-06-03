@@ -1656,6 +1656,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "nekocode-core",
+ "nekocode-types",
  "reqwest",
  "serde",
  "serde_json",

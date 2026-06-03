@@ -21,12 +21,24 @@ pub enum MessageContent {
 
 #[derive(Debug, Clone, Serialize)]
 pub enum StreamEventData {
-    MessageStart,
+    MessageStart(MessageMetadata),
     MessageEnd,
     Content(String),
     ReasoningContent(String),
     ToolCall(ToolCall),
     ToolCallResult(ToolCallResult),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MessageMetadata {
+    pub role: Role,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum Role {
+    User,
+    Assistant,
+    Middleware,
 }
 
 #[derive(Debug, Clone, Serialize)]
