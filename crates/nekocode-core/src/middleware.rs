@@ -1,9 +1,7 @@
 use async_trait::async_trait;
+use nekocode_types::tool::ToolRegistry;
 
-use crate::{
-    agent::tool::ToolRegistry,
-    types::{GenerateRequest, GenerateResponse},
-};
+use crate::types::{GenerateRequest, GenerateResponse};
 
 pub enum AgentControlFlow {
     Output,

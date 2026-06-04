@@ -3,6 +3,7 @@ use crate::api::prelude::*;
 #[derive(Deserialize)]
 pub struct GetThread {
     pub id: u64,
+    pub turns_limit: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -14,7 +15,7 @@ pub struct GetThreadResponse {
     pub created_at: jiff::Timestamp,
     pub active: bool,
     pub generating: bool,
-    pub messages: Vec<Message>,
+    pub turns: Vec<Turn>,
 }
 
 pub async fn get_thread(
@@ -26,9 +27,17 @@ pub async fn get_thread(
         .exec(&mut state.db)
         .await?;
     if let Some(thread) = thread {
-        let messages = toasty::query!(Message FILTER .thread_id == #(payload.id) ORDER BY .created_at DESC LIMIT 50)
+        let turns = if let Some(limit) = payload.turns_limit {
+            toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .created_at DESC LIMIT #limit)
+                .include(Turn::fields().messages())
             .exec(&mut state.db)
-            .await?;
+            .await?
+        } else {
+            toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .created_at DESC LIMIT 1)
+                .include(Turn::fields().messages())
+            .exec(&mut state.db)
+            .await?
+        };
         ApiResponse::ok(GetThreadResponse {
             id: thread.id,
             title: thread.title,
@@ -37,7 +46,7 @@ pub async fn get_thread(
             created_at: thread.created_at,
             active: state.active_threads.contains_key(&thread.id),
             generating: state.generate_states.contains_key(&thread.id),
-            messages,
+            turns,
         })
     } else {
         Err(ApiError::ItemNotFound(format!(

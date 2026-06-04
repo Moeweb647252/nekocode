@@ -4,6 +4,7 @@ use toasty::Db;
 pub mod message;
 pub mod thread;
 pub mod token;
+pub mod turn;
 
 pub async fn prepare_db(config: &Config) -> toasty::Result<Db> {
     Db::builder()

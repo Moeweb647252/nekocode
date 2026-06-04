@@ -14,15 +14,15 @@ pub enum Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssistantMessage {
     pub blocks: Vec<AssistantContentBlock>,
-    pub reasoning: Option<String>,
-    pub tool_calls: Vec<ToolCall>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AssistantContentBlock {
     ToolCall(ToolCall),
-    Reasoning(String),
-    Text(String),
+    Text {
+        content: String,
+        reasoning_content: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,5 +55,13 @@ pub enum Role {
 #[derive(Debug, Clone, Serialize)]
 pub struct StreamEvent {
     pub data: StreamEventData,
-    pub created_at: u64,
+    pub created_at: jiff::Timestamp,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct Usage {
+    pub total_input: usize,
+    pub total_output: usize,
+    pub cache_hit: bool,
+    pub cache_miss: usize,
 }

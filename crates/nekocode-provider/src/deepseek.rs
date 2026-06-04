@@ -94,7 +94,7 @@ impl DeepSeek {
             sender.send(event).ok();
         }
         Ok(ProviderResponse {
-            message: Message::User(MessageContent::Text(String::new())),
+            message: AssistantMessage { blocks: vec![] },
             usage: ProviderUsage {
                 total_input: 0,
                 total_output: 0,
@@ -157,7 +157,7 @@ impl DeepSeek {
             sender.send(event).ok();
         }
         Ok(ProviderResponse {
-            message: Message::User(MessageContent::Text(String::new())),
+            message: AssistantMessage { blocks: vec![] },
             usage: ProviderUsage {
                 total_input: 0,
                 total_output: 0,
@@ -209,44 +209,38 @@ fn convert_to_openai_message(msg: &Message) -> ChatCompletionMessageParam {
                 name: None,
             },
         ),
-        Message::Assistant(AssistantMessage {
-            blocks,
-            reasoning,
-            tool_calls,
-        }) => {
-            let content = blocks
-                .iter()
-                .filter_map(|b| match b {
-                    AssistantContentBlock::Text(text) => Some(text.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("");
-            let extra_reasoning: Vec<_> = blocks
-                .iter()
-                .filter_map(|b| match b {
-                    AssistantContentBlock::Reasoning(r) => Some(r.as_str()),
-                    _ => None,
-                })
-                .collect();
-            let combined_reasoning: Vec<&str> = reasoning
-                .as_deref()
-                .into_iter()
-                .chain(extra_reasoning)
-                .collect();
-            let reasoning_content = if combined_reasoning.is_empty() {
-                None
-            } else {
-                Some(combined_reasoning.join(""))
-            };
+        Message::Assistant(assistant) => {
+            let mut content_parts = Vec::new();
+            let mut reasoning_parts = Vec::new();
+            let mut tool_calls = Vec::new();
+            for block in &assistant.blocks {
+                match block {
+                    AssistantContentBlock::Text {
+                        content: text,
+                        reasoning_content,
+                    } => {
+                        content_parts.push(text.clone());
+                        if let Some(r) = reasoning_content {
+                            reasoning_parts.push(r.clone());
+                        }
+                    }
+                    AssistantContentBlock::ToolCall(tc) => {
+                        tool_calls.push(tc.clone());
+                    }
+                }
+            }
             ChatCompletionMessageParam::ChatCompletionAssistantMessageParam(
                 ChatCompletionAssistantMessageParam {
-                    content,
+                    content: content_parts.join(""),
                     name: None,
                     refusal: None,
-                    tool_calls: convert_tool_calls(tool_calls),
+                    tool_calls: convert_tool_calls(&tool_calls),
                     prefix: None,
-                    reasoning_content,
+                    reasoning_content: if reasoning_parts.is_empty() {
+                        None
+                    } else {
+                        Some(reasoning_parts.join(""))
+                    },
                 },
             )
         }
@@ -307,24 +301,23 @@ fn to_anthropic_message(msg: &Message) -> MessageParam {
                 },
             )]),
         },
-        Message::Assistant(AssistantMessage {
-            blocks: assistant_blocks,
-            reasoning,
-            tool_calls,
-        }) => {
+        Message::Assistant(assistant) => {
             let mut blocks: Vec<ContentBlockParam> = Vec::new();
-            for block in assistant_blocks {
+            for block in &assistant.blocks {
                 match block {
-                    AssistantContentBlock::Text(text) => {
+                    AssistantContentBlock::Text {
+                        content: text,
+                        reasoning_content,
+                    } => {
                         blocks.push(ContentBlockParam::TextBlockParam(TextBlockParam {
                             text: text.clone(),
                         }));
-                    }
-                    AssistantContentBlock::Reasoning(r) => {
-                        blocks.push(ContentBlockParam::ThinkingBlockParam {
-                            signature: String::new(),
-                            thinking: r.clone(),
-                        });
+                        if let Some(r) = reasoning_content {
+                            blocks.push(ContentBlockParam::ThinkingBlockParam {
+                                signature: String::new(),
+                                thinking: r.clone(),
+                            });
+                        }
                     }
                     AssistantContentBlock::ToolCall(tc) => {
                         blocks.push(ContentBlockParam::ToolUseBlockParam(
@@ -336,21 +329,6 @@ fn to_anthropic_message(msg: &Message) -> MessageParam {
                         ));
                     }
                 }
-            }
-            if let Some(reasoning) = reasoning {
-                blocks.push(ContentBlockParam::ThinkingBlockParam {
-                    signature: String::new(),
-                    thinking: reasoning.clone(),
-                });
-            }
-            for tc in tool_calls {
-                blocks.push(ContentBlockParam::ToolUseBlockParam(
-                    crate::parser::anthropic::types::ToolUseBlockParam {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        input: tc.args.clone(),
-                    },
-                ));
             }
             MessageParam {
                 role: AnthropicRole::Assistant,

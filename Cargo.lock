@@ -1622,6 +1622,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "jiff",
  "nekocode-entities",
  "nekocode-types",
  "reqwest",
@@ -1680,9 +1681,12 @@ name = "nekocode-types"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "dirs",
+ "jiff",
  "serde",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]

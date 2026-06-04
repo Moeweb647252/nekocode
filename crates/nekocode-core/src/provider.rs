@@ -1,5 +1,5 @@
 use nekocode_types::{
-    generate::{self, Message},
+    generate::{self, AssistantMessage, Message},
     tool::ToolCall,
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -41,7 +41,7 @@ pub enum MessageContent {
 }
 
 pub struct ProviderResponse {
-    pub message: Message,
+    pub message: AssistantMessage,
     pub usage: ProviderUsage,
 }
 
