@@ -1,5 +1,4 @@
 pub mod error;
-pub mod tool;
 use std::sync::Arc;
 
 use anyhow::anyhow;
@@ -57,7 +56,7 @@ impl Agent {
                 "Thread not found: {}",
                 self.thread_id
             )))?;
-        let mut turns = if let Some(turn_id) = thread.generate_start_turn_id {
+        let old_turns = if let Some(turn_id) = thread.generate_start_turn_id {
             query!(nekocode_entities::turn::Turn FILTER .id >= #turn_id AND .thread_id == #(self.thread_id) ORDER BY .created_at ASC)
                 .include(nekocode_entities::turn::Turn::fields().messages())
                 .exec(&mut db)
@@ -65,32 +64,29 @@ impl Agent {
         } else {
             Vec::new()
         };
-        let new_turn = create!(nekocode_entities::turn::Turn {
+        let mut this_turn = create!(nekocode_entities::turn::Turn {
             thread_id: self.thread_id,
-            turn_index: turns.len() as u64,
+            turn_index: old_turns.len() as u64,
             usage: Default::default(),
             finished: false,
         })
         .exec(&mut db)
         .await?;
-        create!(nekocode_entities::message::Message {
-            turn_id: new_turn.id,
+        let user_message = create!(nekocode_entities::message::Message {
+            turn_id: this_turn.id,
             message_index: 0,
             content: nekocode_types::generate::Message::User(MessageContent::Text(input)),
         })
         .exec(&mut db)
         .await?;
         let mut message_index = 1;
-        let turn_id = new_turn.id;
-        turns.push(new_turn);
-        let mut messages = Vec::new();
-        for turn in turns.into_iter().rev() {
-            let turn_messages =
-                query!(nekocode_entities::message::Message FILTER .turn_id == #(turn.id))
-                    .exec(&mut db)
-                    .await?;
-            messages.extend(turn_messages);
+        let mut old_messages = Vec::new();
+        for turn in old_turns.into_iter() {
+            let turn_messages = turn.messages.get().to_owned();
+            old_messages.extend(turn_messages);
         }
+        let mut messages = old_messages.clone();
+        messages.push(user_message);
         let mut request = GenerateRequest {
             messages: messages.into_iter().map(|m| m.content).collect(),
             ..Default::default()
@@ -106,9 +102,9 @@ impl Agent {
             'tool_loop: loop {
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                 let provider = self.provider.clone();
-                let request_clone = request.clone();
+                let system_prompt = request.system_prompt.clone();
                 let handle =
-                    tokio::spawn(async move { provider.stream_generate(request_clone, tx).await });
+                    tokio::spawn(async move { provider.stream_generate(request, tx).await });
                 while let Some(event) = (&mut rx).recv().await {
                     let agent_event = AgentEvent {
                         index,
@@ -127,7 +123,7 @@ impl Agent {
                     .await
                     .map_err(|e| -> AgentError { anyhow!("error joining task {e}").into() })??;
                 create!(nekocode_entities::message::Message {
-                    turn_id: turn_id,
+                    turn_id: this_turn.id,
                     message_index: message_index,
                     content: nekocode_types::generate::Message::Assistant(response.message.clone()),
                 })
@@ -150,7 +146,7 @@ impl Agent {
                                 },
                             };
                             create!(nekocode_entities::message::Message {
-                                turn_id: turn_id,
+                                turn_id: this_turn.id,
                                 message_index: message_index,
                                 content: nekocode_types::generate::Message::ToolCallResult(
                                     tool_call_result.clone()
@@ -177,12 +173,27 @@ impl Agent {
                     }
                 }
                 generate_response.merge(response);
+                this_turn = query!(nekocode_entities::turn::Turn FILTER .id == #(this_turn.id))
+                    .include(nekocode_entities::turn::Turn::fields().messages())
+                    .first()
+                    .exec(&mut db)
+                    .await?
+                    .ok_or(AgentError::ItemNotFound(format!(
+                        "Turn not found: {}",
+                        this_turn.id
+                    )))?;
+                let mut messages = old_messages.clone();
+                messages.extend(this_turn.messages.get().to_owned());
+                request = GenerateRequest {
+                    messages: messages.into_iter().map(|m| m.content).collect(),
+                    system_prompt: system_prompt,
+                };
             }
 
             let mut control_flow = AgentControlFlow::Output;
             for middleware in self.middlewares.iter() {
                 middleware
-                    .after_generate(&request, &generate_response, &mut control_flow)
+                    .after_generate(&generate_response, &mut control_flow)
                     .await?;
             }
             match control_flow {
@@ -193,6 +204,10 @@ impl Agent {
                 }
             }
         }
+        let mut update =
+            query!(nekocode_entities::turn::Turn FILTER .id == #(this_turn.id)).update();
+        update.set_finished(true);
+        update.exec(&mut db).await?;
 
         Ok(RunLoopSummary {})
     }

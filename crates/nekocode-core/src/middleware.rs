@@ -20,7 +20,6 @@ pub trait Middleware: Send + Sync {
 
     async fn after_generate(
         &self,
-        _: &GenerateRequest,
         _: &GenerateResponse,
         _: &mut AgentControlFlow,
     ) -> Result<(), anyhow::Error> {
