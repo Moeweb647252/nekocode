@@ -1604,6 +1604,7 @@ dependencies = [
  "nekocode-entities",
  "nekocode-provider",
  "nekocode-types",
+ "scopeguard",
  "serde",
  "serde_json",
  "thiserror",

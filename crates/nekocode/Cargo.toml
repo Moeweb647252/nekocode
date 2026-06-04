@@ -21,6 +21,7 @@ boxcar.workspace = true
 dirs.workspace = true
 toml.workspace = true
 tokio-util.workspace = true
+scopeguard.workspace = true
 
 nekocode-core.workspace = true
 nekocode-entities.workspace = true

@@ -67,6 +67,10 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
             entry.insert(generate_state.clone());
         }
     }
+    let guard_thread_id = payload.thread_id;
+    scopeguard::defer! {
+        state.generate_states.remove(&guard_thread_id);
+    };
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let agent = if let Some(agent) = state.active_threads.get(&payload.thread_id) {
         agent.read().await.clone()
