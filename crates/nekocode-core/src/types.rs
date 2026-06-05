@@ -1,4 +1,4 @@
-use nekocode_types::generate::{AssistantMessage, Message, StreamEvent};
+use nekocode_types::generate::{Message, StreamEvent, StreamEventData};
 
 use crate::provider::ProviderResponse;
 
@@ -9,27 +9,38 @@ pub struct GenerateRequest {
 }
 
 pub struct GenerateResponse {
-    message: AssistantMessage,
+    pub message: Vec<Message>,
 }
 
 impl GenerateResponse {
     pub fn new() -> Self {
         Self {
-            message: AssistantMessage { blocks: Vec::new() },
+            message: Vec::new(),
         }
     }
 
+    /// Merge a completed provider response by converting its assistant
+    /// message into a [`Message`] and appending it.
     pub fn merge(&mut self, response: ProviderResponse) {
-        todo!()
+        self.message.push(Message::Assistant(response.message));
     }
 
+    /// Handle an incremental stream event. Tool-call results are appended
+    /// directly to the message list so middleware can inspect them.
     pub fn merge_stream_event(&mut self, event: StreamEvent) {
-        todo!()
+        match event.data {
+            StreamEventData::ToolCallResult(result) => {
+                self.message.push(Message::ToolCallResult(result));
+            }
+            _ => {}
+        }
     }
 }
 
 impl From<ProviderResponse> for GenerateResponse {
-    fn from(_value: ProviderResponse) -> Self {
-        todo!()
+    fn from(value: ProviderResponse) -> Self {
+        Self {
+            message: vec![Message::Assistant(value.message)],
+        }
     }
 }

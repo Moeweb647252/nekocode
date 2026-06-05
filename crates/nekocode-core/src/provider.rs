@@ -1,5 +1,5 @@
 use nekocode_types::{
-    generate::{self, AssistantMessage, Message},
+    generate::{self, AssistantMessage},
     tool::ToolCall,
 };
 use tokio::sync::mpsc::UnboundedSender;
