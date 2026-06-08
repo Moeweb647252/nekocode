@@ -13,7 +13,7 @@ provide("selectedThread", selectedThread);
       <div class="h-full flex items-center justify-center" v-if="!selectedThread">
         <h1 class="text-3xl text-gray-500">Select or create a thread to get started</h1>
       </div>
-      <div v-else>
+      <div class="h-full" v-else>
         <ThreadPanel :key="selectedThread.id" />
       </div>
     </SplitterPanel>

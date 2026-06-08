@@ -101,7 +101,6 @@ pub struct ChatCompletionStreamResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "object")]
 pub enum ChatCompletionObject {
     #[serde(rename = "chat.completion.chunk")]
     ChatCompletionChunk,

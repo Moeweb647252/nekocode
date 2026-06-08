@@ -2,7 +2,7 @@ pub mod error;
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use nekocode_entities::thread::Thread;
+use nekocode_entities::{thread::Thread, turn::Turn};
 use nekocode_types::{
     generate::{AssistantContentBlock, MessageContent, StreamEvent, StreamEventData},
     tool::{ToolCallResult, ToolCallResultInner, ToolRegistry},
@@ -57,14 +57,17 @@ impl Agent {
                 self.thread_id
             )))?;
         let old_turns = if let Some(turn_id) = thread.generate_start_turn_id {
-            query!(nekocode_entities::turn::Turn FILTER .id >= #turn_id AND .thread_id == #(self.thread_id) ORDER BY .created_at ASC)
-                .include(nekocode_entities::turn::Turn::fields().messages())
+            query!(Turn FILTER .id >= #turn_id AND .thread_id == #(self.thread_id) ORDER BY .created_at ASC)
+                .include(Turn::fields().messages())
                 .exec(&mut db)
                 .await?
         } else {
-            Vec::new()
+            query!(Turn FILTER .thread_id == #(self.thread_id) ORDER BY .created_at ASC)
+                .include(Turn::fields().messages())
+                .exec(&mut db)
+                .await?
         };
-        let mut this_turn = create!(nekocode_entities::turn::Turn {
+        let mut this_turn = create!(Turn {
             thread_id: self.thread_id,
             turn_index: old_turns.len() as u64,
             usage: Json(Default::default()),
@@ -99,7 +102,8 @@ impl Agent {
                     .await?;
             }
             let mut generate_response = GenerateResponse::new();
-            'tool_loop: loop {
+            loop {
+                let mut need_break = false;
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                 let provider = self.provider.clone();
                 let system_prompt = request.system_prompt.clone();
@@ -114,8 +118,9 @@ impl Agent {
                         .send(agent_event)
                         .map_err(|e| AgentError::Other(anyhow!("error sending agent event {e}")))?;
                     index += 1;
+
                     match event {
-                        ProviderEvent::MessageEnd => break 'tool_loop,
+                        ProviderEvent::MessageEnd => need_break = true,
                         _ => {}
                     }
                 }
@@ -173,8 +178,11 @@ impl Agent {
                     }
                 }
                 generate_response.merge(response);
-                this_turn = query!(nekocode_entities::turn::Turn FILTER .id == #(this_turn.id))
-                    .include(nekocode_entities::turn::Turn::fields().messages())
+                if need_break {
+                    break;
+                }
+                this_turn = query!(Turn FILTER .id == #(this_turn.id))
+                    .include(Turn::fields().messages())
                     .first()
                     .exec(&mut db)
                     .await?
@@ -204,8 +212,7 @@ impl Agent {
                 }
             }
         }
-        let mut update =
-            query!(nekocode_entities::turn::Turn FILTER .id == #(this_turn.id)).update();
+        let mut update = query!(Turn FILTER .id == #(this_turn.id)).update();
         update.set_finished(true);
         update.exec(&mut db).await?;
 

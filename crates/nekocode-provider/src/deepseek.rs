@@ -8,6 +8,7 @@ use nekocode_types::{
     tool::{ToolCall, ToolCallResult, ToolCallResultInner},
 };
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::debug;
 
 use crate::{
     parser::{
@@ -77,6 +78,7 @@ impl DeepSeek {
         sender: UnboundedSender<ProviderEvent>,
     ) -> Result<ProviderResponse, ProviderError> {
         let body = self.build_openai_request(&request);
+        debug!("OpenAI request body: {:?}", body);
         let url = format!("{}/v1/chat/completions", self.config.api_base);
         let resp = self
             .client
@@ -90,18 +92,20 @@ impl DeepSeek {
             .await
             .map_err(|e| ProviderError::Other(e.into()))?;
         let mut stream = OpenAIV1Stream::new(sse);
+        let mut acc = ResponseAccumulator::new();
         while let Some(event) = stream.next_event().await? {
-            sender.send(event).ok();
+            let event = event; // re-bind as immutable
+            sender.send(event.clone()).ok();
+            acc.ingest(&event);
         }
-        Ok(ProviderResponse {
-            message: AssistantMessage { blocks: vec![] },
-            usage: ProviderUsage {
-                total_input: 0,
-                total_output: 0,
-                cache_hit: false,
-                cache_miss: 0,
-            },
-        })
+        let message = acc.finish();
+        let usage = stream.take_usage().unwrap_or(ProviderUsage {
+            total_input: 0,
+            total_output: 0,
+            cache_hit: false,
+            cache_miss: 0,
+        });
+        Ok(ProviderResponse { message, usage })
     }
 
     fn build_openai_request(&self, request: &GenerateRequest) -> ChatCompletionRequest {
@@ -139,6 +143,7 @@ impl DeepSeek {
         sender: UnboundedSender<ProviderEvent>,
     ) -> Result<ProviderResponse, ProviderError> {
         let body = self.build_anthropic_body(&request);
+        debug!("Anthropic request body: {:?}", body);
         let url = format!("{}/v1/messages", self.config.api_base);
         let resp = self
             .client
@@ -153,18 +158,19 @@ impl DeepSeek {
             .await
             .map_err(|e| ProviderError::Other(e.into()))?;
         let mut stream = AnthropicStream::new(sse);
+        let mut acc = ResponseAccumulator::new();
         while let Some(event) = stream.next_event().await? {
-            sender.send(event).ok();
+            sender.send(event.clone()).ok();
+            acc.ingest(&event);
         }
-        Ok(ProviderResponse {
-            message: AssistantMessage { blocks: vec![] },
-            usage: ProviderUsage {
-                total_input: 0,
-                total_output: 0,
-                cache_hit: false,
-                cache_miss: 0,
-            },
-        })
+        let message = acc.finish();
+        let usage = stream.take_usage().unwrap_or(ProviderUsage {
+            total_input: 0,
+            total_output: 0,
+            cache_hit: false,
+            cache_miss: 0,
+        });
+        Ok(ProviderResponse { message, usage })
     }
 
     fn build_anthropic_body(&self, request: &GenerateRequest) -> CreateMessageRequest {
@@ -190,6 +196,59 @@ impl DeepSeek {
             top_k: self.config.top_k,
             max_tokens: self.config.max_tokens,
         }
+    }
+}
+
+// ── Response accumulator ──
+
+struct ResponseAccumulator {
+    text: String,
+    reasoning: String,
+    tool_calls: Vec<ToolCall>,
+}
+
+impl ResponseAccumulator {
+    fn new() -> Self {
+        Self {
+            text: String::new(),
+            reasoning: String::new(),
+            tool_calls: Vec::new(),
+        }
+    }
+
+    fn ingest(&mut self, event: &ProviderEvent) {
+        match event {
+            ProviderEvent::Content(s) => self.text.push_str(s),
+            ProviderEvent::ReasoningContent(s) => self.reasoning.push_str(s),
+            ProviderEvent::ToolCall(tc) => self.tool_calls.push(tc.clone()),
+            ProviderEvent::MessageStart | ProviderEvent::MessageEnd => {}
+        }
+    }
+
+    fn finish(self) -> AssistantMessage {
+        let mut blocks: Vec<AssistantContentBlock> = Vec::new();
+
+        if !self.text.is_empty() {
+            blocks.push(AssistantContentBlock::Text {
+                content: self.text,
+                reasoning_content: if self.reasoning.is_empty() {
+                    None
+                } else {
+                    Some(self.reasoning)
+                },
+            });
+        } else if !self.reasoning.is_empty() {
+            blocks.push(AssistantContentBlock::Text {
+                content: String::new(),
+                reasoning_content: Some(self.reasoning),
+            });
+        }
+
+        for tc in self.tool_calls {
+            blocks.push(AssistantContentBlock::ToolCall(tc));
+        }
+
+        AssistantMessage { blocks }
     }
 }
 
@@ -229,6 +288,7 @@ fn convert_to_openai_message(msg: &Message) -> ChatCompletionMessageParam {
                     }
                 }
             }
+            let has_tool_calls = !tool_calls.is_empty();
             ChatCompletionMessageParam::ChatCompletionAssistantMessageParam(
                 ChatCompletionAssistantMessageParam {
                     content: content_parts.join(""),
@@ -236,10 +296,12 @@ fn convert_to_openai_message(msg: &Message) -> ChatCompletionMessageParam {
                     refusal: None,
                     tool_calls: convert_tool_calls(&tool_calls),
                     prefix: None,
-                    reasoning_content: if reasoning_parts.is_empty() {
-                        None
-                    } else {
+                    // Reasoning must only be passed back when the model
+                    // performed a tool call; otherwise the API ignores it.
+                    reasoning_content: if has_tool_calls && !reasoning_parts.is_empty() {
                         Some(reasoning_parts.join(""))
+                    } else {
+                        None
                     },
                 },
             )
@@ -302,6 +364,10 @@ fn to_anthropic_message(msg: &Message) -> MessageParam {
             )]),
         },
         Message::Assistant(assistant) => {
+            let has_tool_calls = assistant
+                .blocks
+                .iter()
+                .any(|b| matches!(b, AssistantContentBlock::ToolCall(_)));
             let mut blocks: Vec<ContentBlockParam> = Vec::new();
             for block in &assistant.blocks {
                 match block {
@@ -312,11 +378,15 @@ fn to_anthropic_message(msg: &Message) -> MessageParam {
                         blocks.push(ContentBlockParam::TextBlockParam(TextBlockParam {
                             text: text.clone(),
                         }));
-                        if let Some(r) = reasoning_content {
-                            blocks.push(ContentBlockParam::ThinkingBlockParam {
-                                signature: String::new(),
-                                thinking: r.clone(),
-                            });
+                        // Thinking must only be passed back when the model
+                        // performed a tool call; otherwise the API ignores it.
+                        if has_tool_calls {
+                            if let Some(r) = reasoning_content {
+                                blocks.push(ContentBlockParam::ThinkingBlockParam {
+                                    signature: String::new(),
+                                    thinking: r.clone(),
+                                });
+                            }
                         }
                     }
                     AssistantContentBlock::ToolCall(tc) => {

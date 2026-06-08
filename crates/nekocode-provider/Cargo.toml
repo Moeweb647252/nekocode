@@ -17,5 +17,6 @@ tokio-util.workspace = true
 tokio-stream.workspace = true
 async-stream.workspace = true
 anyhow.workspace = true
+tracing.workspace = true
 nekocode-core.workspace = true
 nekocode-types.workspace = true

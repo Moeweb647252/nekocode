@@ -52,6 +52,7 @@ pub struct ProviderUsage {
     pub cache_miss: usize,
 }
 
+#[derive(Clone)]
 pub enum ProviderEvent {
     MessageStart,
     MessageEnd,
@@ -62,6 +63,22 @@ pub enum ProviderEvent {
 
 impl Into<generate::StreamEvent> for &ProviderEvent {
     fn into(self) -> generate::StreamEvent {
-        todo!()
+        let data = match self {
+            ProviderEvent::MessageStart => {
+                generate::StreamEventData::MessageStart(generate::MessageMetadata {
+                    role: generate::Role::Assistant,
+                })
+            }
+            ProviderEvent::MessageEnd => generate::StreamEventData::MessageEnd,
+            ProviderEvent::Content(text) => generate::StreamEventData::Content(text.clone()),
+            ProviderEvent::ReasoningContent(text) => {
+                generate::StreamEventData::ReasoningContent(text.clone())
+            }
+            ProviderEvent::ToolCall(tc) => generate::StreamEventData::ToolCall(tc.clone()),
+        };
+        generate::StreamEvent {
+            data,
+            created_at: jiff::Timestamp::now(),
+        }
     }
 }

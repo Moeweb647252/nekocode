@@ -6,9 +6,12 @@ use futures_util::StreamExt;
 pub mod types;
 
 use crate::sse::ServerSentEvents;
-use nekocode_core::provider::{ProviderError, ProviderEvent};
+use nekocode_core::provider::{ProviderError, ProviderEvent, ProviderUsage};
 use nekocode_types::tool::ToolCall;
-use types::{ChatCompletionStreamDeltaToolCall, ChatCompletionStreamResponse, FinishReason};
+use types::{
+    ChatCompletionStreamDeltaToolCall, ChatCompletionStreamResponse,
+    ChatCompletionStreamUsage, FinishReason,
+};
 
 struct PendingOpenAIToolCall {
     id: Option<String>,
@@ -19,6 +22,7 @@ struct PendingOpenAIToolCall {
 pub struct OpenAIV1Stream {
     stream: ServerSentEvents,
     pending_tool_calls: HashMap<usize, PendingOpenAIToolCall>,
+    usage: Option<ChatCompletionStreamUsage>,
 }
 
 impl OpenAIV1Stream {
@@ -26,7 +30,18 @@ impl OpenAIV1Stream {
         Self {
             stream,
             pending_tool_calls: HashMap::new(),
+            usage: None,
         }
+    }
+
+    /// Consume the accumulated usage stats from the stream, if any.
+    pub fn take_usage(&mut self) -> Option<ProviderUsage> {
+        self.usage.take().map(|u| ProviderUsage {
+            total_input: u.prompt_tokens,
+            total_output: u.completion_tokens,
+            cache_hit: false,
+            cache_miss: 0,
+        })
     }
 
     pub async fn next_event(&mut self) -> Result<Option<ProviderEvent>, ProviderError> {
@@ -46,6 +61,11 @@ impl OpenAIV1Stream {
     }
 
     fn handle_chunk(&mut self, chunk: &ChatCompletionStreamResponse) -> Option<ProviderEvent> {
+        // Capture usage from the final chunk.
+        if chunk.usage.is_some() {
+            self.usage = chunk.usage.clone();
+        }
+
         for choice in &chunk.choices {
             let delta = &choice.delta;
 

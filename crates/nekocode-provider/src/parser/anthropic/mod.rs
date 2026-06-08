@@ -7,8 +7,8 @@ use nekocode_types::tool::ToolCall;
 pub mod types;
 
 use crate::sse::ServerSentEvents;
-use nekocode_core::provider::{ProviderError, ProviderEvent};
-use types::{ContentBlock, RawContentBlockDelta, RawMessageStreamEvent};
+use nekocode_core::provider::{ProviderError, ProviderEvent, ProviderUsage};
+use types::{ContentBlock, RawContentBlockDelta, RawMessageStreamEvent, Usage};
 
 struct PendingToolCall {
     id: String,
@@ -19,6 +19,7 @@ struct PendingToolCall {
 pub struct AnthropicStream {
     stream: ServerSentEvents,
     pending_tool_calls: HashMap<usize, PendingToolCall>,
+    usage: Option<Usage>,
 }
 
 impl AnthropicStream {
@@ -26,7 +27,18 @@ impl AnthropicStream {
         Self {
             stream,
             pending_tool_calls: HashMap::new(),
+            usage: None,
         }
+    }
+
+    /// Consume the accumulated usage stats from the stream, if any.
+    pub fn take_usage(&mut self) -> Option<ProviderUsage> {
+        self.usage.take().map(|u| ProviderUsage {
+            total_input: u.input_tokens,
+            total_output: u.output_tokens,
+            cache_hit: u.cache_read_input_tokens > 0,
+            cache_miss: u.cache_creation_input_tokens,
+        })
     }
 
     pub async fn next_event(&mut self) -> Result<Option<ProviderEvent>, ProviderError> {
@@ -50,10 +62,9 @@ impl AnthropicStream {
     fn handle_delta(&mut self, delta: RawMessageStreamEvent) -> Option<ProviderEvent> {
         match delta {
             RawMessageStreamEvent::RawMessageStartEvent(start) => {
+                self.usage = Some(start.message.usage.clone());
                 for block in &start.message.content {
                     if let Some(event) = self.handle_content_block_start(0, block) {
-                        // message_start content blocks don't have indices, assign 0
-                        // In practice, there won't be multiple blocks with index 0 in message_start
                         return Some(event);
                     }
                 }

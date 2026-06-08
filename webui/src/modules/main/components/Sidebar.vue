@@ -43,7 +43,7 @@ const newThread = async () => {
           </ul>
         </li>
       </div>
-      <divz>
+      <div>
         <Listbox :options="threads" option-label="name" v-model="selectedThread">
           <template #option="{ option }">
             <span class="select-none text-nowrap"
@@ -52,7 +52,7 @@ const newThread = async () => {
             >
           </template>
         </Listbox>
-      </divz>
+      </div>
     </div>
   </div>
 </template>
