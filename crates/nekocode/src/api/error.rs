@@ -7,7 +7,8 @@ pub enum ApiError {
     DatabaseError(#[from] toasty::Error),
     #[error("Error while serializing data: {0}")]
     SerializationError(serde_json::Error),
-
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
     #[error("thread alreay activated")]
     ThreadAlreadyActivated,
     #[error("Thread not activated")]
@@ -16,6 +17,10 @@ pub enum ApiError {
     ThreadGenerating,
     #[error("Item not found: {0}")]
     ItemNotFound(String),
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+    #[error("Internal error: {0}")]
+    Internal(String),
 
     #[error("Unauthorized")]
     Unauthorized,
@@ -28,10 +33,13 @@ impl ApiError {
         match self {
             ApiError::DatabaseError(_) => "database_error",
             ApiError::SerializationError(_) => "serialization_error",
+            ApiError::IoError(_) => "io_error",
             ApiError::ThreadAlreadyActivated => "thread_already_activated",
             ApiError::ThreadNotActivated => "thread_not_activated",
             ApiError::ThreadGenerating => "thread_generating",
             ApiError::ItemNotFound(_) => "item_not_found",
+            ApiError::InvalidInput(_) => "invalid_input",
+            ApiError::Internal(_) => "internal_error",
             ApiError::Unauthorized => "unauthorized",
             ApiError::Other(_) => "other",
         }

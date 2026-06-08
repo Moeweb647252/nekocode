@@ -8,19 +8,10 @@ use tokio::sync::RwLock;
 
 mod api;
 
-fn default_config_path() -> String {
-    let config_dir = dirs::config_dir().unwrap_or(PathBuf::new());
-    config_dir
-        .join("nekocode")
-        .join("config.toml")
-        .to_string_lossy()
-        .into_owned()
-}
-
 #[derive(clap::Parser)]
 struct Args {
-    #[arg(short, long, default_value_t = default_config_path())]
-    config_path: String,
+    #[arg(short, long)]
+    config_path: Option<String>,
 }
 
 #[derive(Clone)]
@@ -42,10 +33,22 @@ async fn main() {
         )
         .init();
     let args = Args::parse();
-    let config_content = std::fs::read_to_string(&args.config_path)
-        .unwrap_or_else(|_| panic!("Failed to read config file at {}", args.config_path));
+    let config_path = if let Some(path) = args.config_path {
+        PathBuf::from(path)
+    } else {
+        dirs::config_dir()
+            .map(|p| p.join("nekocode"))
+            .unwrap_or(PathBuf::new())
+    };
+    let config_file_path = config_path.join("config.toml");
+    let config_content = std::fs::read_to_string(&config_file_path).unwrap_or_else(|_| {
+        panic!(
+            "Failed to read config file at {}",
+            config_file_path.to_string_lossy()
+        )
+    });
     let config: Config = toml::from_str(&config_content).expect("Failed to load config");
-    let db = nekocode_entities::prepare_db(&config)
+    let db = nekocode_entities::prepare_db(config_path.join("nekocode.db"))
         .await
         .expect("Failed to prepare database");
 

@@ -16,7 +16,7 @@ tokio-util = { version = "0.7", features = ["codec"] }
 tokio-stream = "0.1"
 async-stream = "0.3"
 anyhow = "1.0"
-toasty = { version = "0.6", features = ["sqlite", "serde", "jiff"] }
+toasty = { path="../toasty/crates/toasty", features = ["turso", "serde", "jiff"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 jiff = { version = "0.2", features = ["serde"] }

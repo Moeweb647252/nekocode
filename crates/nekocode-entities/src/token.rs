@@ -2,6 +2,7 @@ use serde::Serialize;
 use toasty::Model;
 
 #[derive(Debug, Clone, Model, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Token {
     #[key]
     #[auto]

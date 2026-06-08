@@ -3,6 +3,7 @@ pub mod error;
 pub mod generate;
 pub mod middleware;
 pub mod thread;
+pub mod util;
 
 use axum::{
     Router,
@@ -21,6 +22,7 @@ pub fn router() -> Router<AppState> {
         .nest("/thread", thread::router())
         .nest("/auth", auth::router())
         .nest("/generate", generate::router())
+        .nest("/util", util::router())
 }
 
 pub type ApiResult = Result<ApiResponse, ApiError>;

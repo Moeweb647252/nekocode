@@ -1,18 +1,20 @@
+use crate::serialize_json;
 use serde::Serialize;
-use toasty::{BelongsTo, Model};
+use toasty::{Deferred, Json, Model};
 
 #[derive(Debug, Clone, Model, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Message {
     #[key]
     #[auto]
     pub id: u64,
 
+    #[index]
     pub turn_id: u64,
     pub message_index: u64,
-    #[serialize(json)]
-    pub content: nekocode_types::generate::Message,
-    #[serialize(json)]
-    pub usage: Option<nekocode_types::generate::Usage>,
+    #[serde(serialize_with = "serialize_json")]
+    pub content: Json<nekocode_types::generate::Message>,
+    pub usage: Option<Json<nekocode_types::generate::Usage>>,
 
     #[update(jiff::Timestamp::now())]
     pub updated_at: jiff::Timestamp,
@@ -20,5 +22,5 @@ pub struct Message {
     pub created_at: jiff::Timestamp,
 
     #[belongs_to(key=turn_id, references=id)]
-    pub turn: BelongsTo<crate::turn::Turn>,
+    pub turn: Deferred<crate::turn::Turn>,
 }

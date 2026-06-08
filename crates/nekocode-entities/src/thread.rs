@@ -1,9 +1,8 @@
 use serde::Serialize;
-use toasty::{HasMany, Model};
-
-use crate::turn::Turn;
+use toasty::{Deferred, Model};
 
 #[derive(Debug, Clone, Model, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Thread {
     #[key]
     #[auto]
@@ -20,5 +19,5 @@ pub struct Thread {
     pub created_at: jiff::Timestamp,
 
     #[has_many]
-    pub turns: HasMany<Turn>,
+    pub turns: Deferred<Vec<crate::turn::Turn>>,
 }

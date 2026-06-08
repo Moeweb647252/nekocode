@@ -8,7 +8,7 @@ use nekocode_types::{
     tool::{ToolCallResult, ToolCallResultInner, ToolRegistry},
 };
 use serde::Serialize;
-use toasty::{create, query};
+use toasty::{Json, create, query};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
@@ -67,7 +67,7 @@ impl Agent {
         let mut this_turn = create!(nekocode_entities::turn::Turn {
             thread_id: self.thread_id,
             turn_index: old_turns.len() as u64,
-            usage: Default::default(),
+            usage: Json(Default::default()),
             finished: false,
         })
         .exec(&mut db)
@@ -88,7 +88,7 @@ impl Agent {
         let mut messages = old_messages.clone();
         messages.push(user_message);
         let mut request = GenerateRequest {
-            messages: messages.into_iter().map(|m| m.content).collect(),
+            messages: messages.into_iter().map(|m| m.content.0).collect(),
             ..Default::default()
         };
         loop {
@@ -185,7 +185,7 @@ impl Agent {
                 let mut messages = old_messages.clone();
                 messages.extend(this_turn.messages.get().to_owned());
                 request = GenerateRequest {
-                    messages: messages.into_iter().map(|m| m.content).collect(),
+                    messages: messages.into_iter().map(|m| m.content.0).collect(),
                     system_prompt: system_prompt,
                 };
             }

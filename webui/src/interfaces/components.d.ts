@@ -12,13 +12,21 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    Button: typeof import('primevue/button')['default']
+    Listbox: typeof import('primevue/listbox')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    Splitter: typeof import('primevue/splitter')['default']
+    SplitterPanel: typeof import('primevue/splitterpanel')['default']
   }
 }
 
 // For TSX support
 declare global {
+  const Button: typeof import('primevue/button')['default']
+  const Listbox: typeof import('primevue/listbox')['default']
   const RouterLink: typeof import('vue-router')['RouterLink']
   const RouterView: typeof import('vue-router')['RouterView']
+  const Splitter: typeof import('primevue/splitter')['default']
+  const SplitterPanel: typeof import('primevue/splitterpanel')['default']
 }

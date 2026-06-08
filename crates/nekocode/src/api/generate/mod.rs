@@ -36,7 +36,10 @@ pub enum Reason {
 
 pub fn router() -> axum::Router<AppState> {
     axum::Router::new()
-        .route("/stream", axum::routing::get(stream_generate::stream_generate))
+        .route(
+            "/stream",
+            axum::routing::get(stream_generate::stream_generate),
+        )
         .route(
             "/watch/{thread_id}",
             axum::routing::get(watch_stream::watch_stream),

@@ -5,7 +5,7 @@ use nekocode_types::config::AuthenticationConfig;
 use crate::AppState;
 
 pub fn router() -> axum::Router<AppState> {
-    axum::Router::new().route("auth", post(auth))
+    axum::Router::new().route("/auth", post(auth))
 }
 
 #[derive(Deserialize)]

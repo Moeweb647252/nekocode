@@ -8,3 +8,4 @@ toasty.workspace = true
 serde.workspace = true
 jiff.workspace = true
 nekocode-types.workspace = true
+tracing.workspace = true
