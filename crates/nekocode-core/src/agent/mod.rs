@@ -19,17 +19,21 @@ use crate::{
 };
 
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentEvent {
     pub index: usize,
     pub data: AgentEventType,
 }
 
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(tag = "type")]
 pub enum AgentEventType {
     StreamEvent(StreamEvent),
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunLoopSummary {}
 
 #[derive(Clone)]
@@ -78,7 +82,9 @@ impl Agent {
         let user_message = create!(nekocode_entities::message::Message {
             turn_id: this_turn.id,
             message_index: 0,
-            content: nekocode_types::generate::Message::User(MessageContent::Text(input)),
+            content: nekocode_types::generate::Message::User(MessageContent::Text {
+                content: input,
+            }),
         })
         .exec(&mut db)
         .await?;

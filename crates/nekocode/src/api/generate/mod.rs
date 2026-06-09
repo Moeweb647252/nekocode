@@ -16,18 +16,21 @@ pub struct GenerateState {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum WebSocketEvent {
     Delta(AgentEvent),
     Stop(StopReason),
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StopReason {
     pub reason: Reason,
     pub detail: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Reason {
     Finished,
     Interrupted,

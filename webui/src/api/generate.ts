@@ -32,7 +32,7 @@ export function streamGenerate(
 ): () => void {
   const url = wsUrl('/stream')
   return connectStream(url, callbacks, (ws) => {
-    ws.send(JSON.stringify({ user_input: userInput, thread_id: threadId }))
+    ws.send(JSON.stringify({ userInput, threadId }))
   })
 }
 
@@ -68,10 +68,10 @@ function connectStream(
   ws.addEventListener('message', (event: MessageEvent<string>) => {
     try {
       const msg: WebSocketEvent = JSON.parse(event.data)
-      if ('Delta' in msg) {
-        callbacks.onDelta(msg.Delta)
-      } else if ('Stop' in msg) {
-        callbacks.onStop(msg.Stop)
+      if ('delta' in msg) {
+        callbacks.onDelta(msg.delta)
+      } else if ('stop' in msg) {
+        callbacks.onStop(msg.stop)
         ws.close()
       }
     } catch (err) {

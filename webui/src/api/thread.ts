@@ -5,7 +5,7 @@ import type { GetThreadResponse, Thread } from './types'
 
 /** POST /api/thread/create */
 export async function createThread(workingDirectory: string): Promise<Thread> {
-  const resp = await post<Thread>('/thread/create', { working_directory: workingDirectory })
+  const resp = await post<Thread>('/thread/create', { workingDirectory })
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to create thread')
   return resp.data
 }
@@ -36,7 +36,7 @@ export async function getThread(
 ): Promise<GetThreadResponse> {
   const resp = await post<GetThreadResponse>('/thread/get', {
     id,
-    turns_limit: turnsLimit ?? null,
+    turnsLimit: turnsLimit ?? null,
   })
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to get thread')
   return resp.data

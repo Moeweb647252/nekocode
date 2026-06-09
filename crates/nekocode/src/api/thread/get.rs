@@ -1,12 +1,14 @@
 use crate::api::prelude::*;
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetThread {
     pub id: u64,
     pub turns_limit: Option<usize>,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetThreadResponse {
     pub id: u64,
     pub title: Option<String>,
@@ -28,15 +30,15 @@ pub async fn get_thread(
         .await?;
     if let Some(thread) = thread {
         let turns = if let Some(limit) = payload.turns_limit {
-            toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .created_at DESC LIMIT #limit)
+            toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .id ASC LIMIT #limit)
                 .include(Turn::fields().messages())
-            .exec(&mut state.db)
-            .await?
+                .exec(&mut state.db)
+                .await?
         } else {
-            toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .created_at DESC LIMIT 1)
+            toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .id ASC LIMIT 1)
                 .include(Turn::fields().messages())
-            .exec(&mut state.db)
-            .await?
+                .exec(&mut state.db)
+                .await?
         };
         ApiResponse::ok(GetThreadResponse {
             id: thread.id,

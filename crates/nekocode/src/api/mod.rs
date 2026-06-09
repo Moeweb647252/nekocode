@@ -28,6 +28,7 @@ pub fn router() -> Router<AppState> {
 pub type ApiResult = Result<ApiResponse, ApiError>;
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ApiResponse {
     pub code: String,
     pub data: serde_json::Value,

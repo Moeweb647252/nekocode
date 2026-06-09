@@ -18,6 +18,8 @@ declare module 'vue' {
     RouterView: typeof import('vue-router')['RouterView']
     Splitter: typeof import('primevue/splitter')['default']
     SplitterPanel: typeof import('primevue/splitterpanel')['default']
+    TextArea: typeof import('primevue/textarea')['default']
+    VirtualScroller: typeof import('primevue/virtualscroller')['default']
   }
 }
 
@@ -29,4 +31,6 @@ declare global {
   const RouterView: typeof import('vue-router')['RouterView']
   const Splitter: typeof import('primevue/splitter')['default']
   const SplitterPanel: typeof import('primevue/splitterpanel')['default']
+  const TextArea: typeof import('primevue/textarea')['default']
+  const VirtualScroller: typeof import('primevue/virtualscroller')['default']
 }

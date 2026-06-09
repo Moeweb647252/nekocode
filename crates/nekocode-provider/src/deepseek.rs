@@ -256,7 +256,7 @@ impl ResponseAccumulator {
 
 fn message_text(content: &MessageContent) -> String {
     match content {
-        MessageContent::Text(text) => text.clone(),
+        MessageContent::Text { content } => content.clone(),
     }
 }
 

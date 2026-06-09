@@ -35,18 +35,24 @@ const newThread = async () => {
 </script>
 <template>
   <div class="h-full sidebar">
-    <div class="grid grid-rows-[auto_1fr] h-full">
-      <div>
+    <div class="grid grid-rows-[auto_1fr] h-full overflow-hidden">
+      <div class="">
         <li>
           <ul>
             <Button label="New Thread" variant="text" size="small" @click="newThread()" />
           </ul>
         </li>
       </div>
-      <div>
-        <Listbox :options="threads" option-label="name" v-model="selectedThread">
+      <div class="overflow-hidden">
+        <Listbox
+          :options="threads"
+          option-label="name"
+          v-model="selectedThread"
+          class="overflow-hidden border-none!"
+          style="background: none"
+        >
           <template #option="{ option }">
-            <span class="select-none text-nowrap"
+            <span class="select-none text-nowrap text-ellipsis overflow-hidden w-full"
               ><div v-if="option.title">{{ option.title }}</div>
               <div v-else>{{ option.workingDirectory }}</div></span
             >

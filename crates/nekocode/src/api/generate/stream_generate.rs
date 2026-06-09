@@ -10,6 +10,7 @@ use crate::api::{
 };
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StreamGenerate {
     pub user_input: String,
     pub thread_id: u64,
