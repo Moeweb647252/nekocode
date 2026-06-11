@@ -27,3 +27,4 @@ nekocode-core.workspace = true
 nekocode-entities.workspace = true
 nekocode-types.workspace = true
 nekocode-provider.workspace = true
+nekocode-shell.workspace = true

@@ -4,7 +4,9 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use nekocode_entities::{thread::Thread, turn::Turn};
 use nekocode_types::{
-    generate::{AssistantContentBlock, MessageContent, StreamEvent, StreamEventData},
+    generate::{
+        AssistantContentBlock, MessageContent, MessageMetadata, Role, StreamEvent, StreamEventData,
+    },
     tool::{ToolCallResult, ToolCallResultInner, ToolRegistry},
 };
 use serde::Serialize;
@@ -107,12 +109,25 @@ impl Agent {
                     .before_generate(&mut request, &mut tool_registry)
                     .await?;
             }
+            request.tool_specs = tool_registry.specs();
             let mut generate_response = GenerateResponse::new();
             loop {
                 let mut need_break = false;
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                 let provider = self.provider.clone();
                 let system_prompt = request.system_prompt.clone();
+                sender
+                    .send(AgentEvent {
+                        index,
+                        data: AgentEventType::StreamEvent(StreamEvent {
+                            data: StreamEventData::MessageStart(MessageMetadata {
+                                role: Role::Assistant,
+                            }),
+                            created_at: jiff::Timestamp::now(),
+                        }),
+                    })
+                    .map_err(|e| AgentError::Other(anyhow!("error sending agent event {e}")))?;
+                index += 1;
                 let handle =
                     tokio::spawn(async move { provider.stream_generate(request, tx).await });
                 while let Some(event) = (&mut rx).recv().await {
@@ -126,7 +141,7 @@ impl Agent {
                     index += 1;
 
                     match event {
-                        ProviderEvent::MessageEnd => need_break = true,
+                        ProviderEvent::MessageEnd(_) => need_break = true,
                         _ => {}
                     }
                 }
@@ -201,6 +216,7 @@ impl Agent {
                 request = GenerateRequest {
                     messages: messages.into_iter().map(|m| m.content.0).collect(),
                     system_prompt: system_prompt,
+                    tool_specs: tool_registry.specs(),
                 };
             }
 
@@ -212,9 +228,20 @@ impl Agent {
             }
             match control_flow {
                 AgentControlFlow::Output => break,
-                AgentControlFlow::GenerateWith(middleware_request) => {
-                    request = middleware_request;
-                    continue;
+                AgentControlFlow::GenerateWith(content) => {
+                    toasty::create!(nekocode_entities::message::Message {
+                        turn_id: this_turn.id,
+                        message_index: message_index,
+                        content: nekocode_types::generate::Message::MiddlewareMessage(content),
+                    })
+                    .exec(&mut db)
+                    .await?;
+                    let mut messages = old_messages.clone();
+                    messages.extend(this_turn.messages.get().to_owned());
+                    request = GenerateRequest {
+                        messages: messages.into_iter().map(|m| m.content.0).collect(),
+                        ..Default::default()
+                    };
                 }
             }
         }

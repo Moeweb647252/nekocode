@@ -2321,6 +2321,7 @@ dependencies = [
  "nekocode-core",
  "nekocode-entities",
  "nekocode-provider",
+ "nekocode-shell",
  "nekocode-types",
  "scopeguard",
  "serde",
@@ -2359,9 +2360,14 @@ dependencies = [
  "jiff",
  "nekocode-types",
  "serde",
+ "serde_json",
  "toasty",
  "tracing",
 ]
+
+[[package]]
+name = "nekocode-file"
+version = "0.1.0"
 
 [[package]]
 name = "nekocode-mcp"
@@ -2387,6 +2393,18 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "nekocode-shell"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "nekocode-core",
+ "nekocode-types",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

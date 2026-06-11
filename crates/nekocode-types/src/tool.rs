@@ -46,10 +46,17 @@ use std::{collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 
 #[derive(Debug, thiserror::Error)]
-pub enum ToolError {}
+pub enum ToolError {
+    #[error("Invalid parameters: {0}")]
+    InvalidParameters(String),
+    #[error("Error during tool execution: {0}")]
+    ExecutionError(String),
+}
 
 #[async_trait]
 pub trait Tool {
+    fn spec(&self) -> ToolSpec;
+
     async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError>;
 }
 
@@ -70,5 +77,9 @@ impl ToolRegistry {
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool + Send + Sync>> {
         self.tools.get(name).cloned()
+    }
+
+    pub fn specs(&self) -> Vec<ToolSpec> {
+        self.tools.values().map(|tool| tool.spec()).collect()
     }
 }

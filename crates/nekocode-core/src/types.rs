@@ -6,8 +6,16 @@ use crate::provider::ProviderResponse;
 pub struct GenerateRequest {
     pub messages: Vec<Message>,
     pub system_prompt: Option<String>,
+    pub(crate) tool_specs: Vec<nekocode_types::tool::ToolSpec>,
 }
 
+impl GenerateRequest {
+    pub fn tool_specs(&self) -> &[nekocode_types::tool::ToolSpec] {
+        &self.tool_specs
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct GenerateResponse {
     pub message: Vec<Message>,
 }

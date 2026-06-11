@@ -1,6 +1,7 @@
 use crate::api::prelude::*;
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateThread {
     pub working_directory: String,
 }
@@ -17,6 +18,13 @@ pub async fn create_thread(
     let thread = toasty::create!(Thread {
         working_directory: payload.working_directory,
         model: model,
+    })
+    .exec(&mut state.db)
+    .await?;
+    toasty::create!(Middleware {
+        thread_id: thread.id,
+        name: "shell".to_string(),
+        config: toasty::Json(serde_json::json!({})),
     })
     .exec(&mut state.db)
     .await?;

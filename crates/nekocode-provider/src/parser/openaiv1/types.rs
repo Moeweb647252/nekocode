@@ -14,6 +14,22 @@ pub struct ChatCompletionRequest {
     pub max_tokens: Option<usize>,
     #[serde(default)]
     pub stop: Option<Vec<String>>,
+    #[serde(default)]
+    pub tools: Option<Vec<ChatCompletionTool>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatCompletionTool {
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    pub function: ChatCompletionToolFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatCompletionToolFunction {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "role")]
@@ -63,13 +79,23 @@ pub enum ChatCompletionMessageToolCall {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatCompletionMessageFunctionToolCall {
-    pub name: String,
+    pub id: String,
+    pub function: Function,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Function {
     pub arguments: String,
+    pub name: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatCompletionMessageCustomToolCall {
-    pub name: String,
+    pub id: String,
+    pub custom: Custom,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Custom {
     pub input: String,
+    pub name: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatCompletionToolMessageParam {

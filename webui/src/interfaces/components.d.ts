@@ -14,6 +14,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     Button: typeof import('primevue/button')['default']
     Listbox: typeof import('primevue/listbox')['default']
+    Panel: typeof import('primevue/panel')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     Splitter: typeof import('primevue/splitter')['default']
@@ -27,6 +28,7 @@ declare module 'vue' {
 declare global {
   const Button: typeof import('primevue/button')['default']
   const Listbox: typeof import('primevue/listbox')['default']
+  const Panel: typeof import('primevue/panel')['default']
   const RouterLink: typeof import('vue-router')['RouterLink']
   const RouterView: typeof import('vue-router')['RouterView']
   const Splitter: typeof import('primevue/splitter')['default']

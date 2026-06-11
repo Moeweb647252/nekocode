@@ -21,6 +21,7 @@ pub async fn activate_thread(
     }
 
     let thread = toasty::query!(Thread FILTER .id == #thread_id)
+        .include(Thread::fields().middlewares())
         .first()
         .exec(&mut state.db.clone())
         .await?
@@ -41,6 +42,19 @@ pub async fn activate_thread(
         )))?;
     let provider = nekocode_provider::build_from_config(&model_config.data);
 
+    let mut middlewares: Vec<Box<dyn nekocode_core::middleware::Middleware>> = Vec::new();
+
+    for i in thread.middlewares.get() {
+        match i.name.as_str() {
+            "shell" => {
+                middlewares.push(Box::new(nekocode_shell::Shell {}));
+            }
+            _ => {
+                tracing::warn!("Unknown middleware: {}", i.name);
+            }
+        }
+    }
+
     match state.active_threads.entry(thread_id) {
         Occupied(_) => {
             // This should never happen due to the check above, but we handle it just in case.
@@ -50,7 +64,7 @@ pub async fn activate_thread(
             entry.insert(Arc::new(RwLock::new(Agent {
                 thread_id,
                 db: state.db.clone(),
-                middlewares: Arc::new(Vec::new()),
+                middlewares: Arc::new(middlewares),
                 provider: Arc::from(provider),
             })));
         }

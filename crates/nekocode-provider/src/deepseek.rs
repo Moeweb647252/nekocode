@@ -5,7 +5,7 @@ use nekocode_core::{
 use nekocode_types::{
     config::{DeepSeekConfig, DeepSeekEndpoint},
     generate::{AssistantContentBlock, AssistantMessage, Message, MessageContent},
-    tool::{ToolCall, ToolCallResult, ToolCallResultInner},
+    tool::{ToolCall, ToolCallResult, ToolCallResultInner, ToolSpec},
 };
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
@@ -22,8 +22,9 @@ use crate::{
         openaiv1::{
             OpenAIV1Stream,
             types::{
-                ChatCompletionAssistantMessageParam, ChatCompletionMessageParam,
-                ChatCompletionRequest, ChatCompletionSystemMessageParam,
+                ChatCompletionAssistantMessageParam, ChatCompletionMessageFunctionToolCall,
+                ChatCompletionMessageParam, ChatCompletionMessageToolCall, ChatCompletionRequest,
+                ChatCompletionSystemMessageParam, ChatCompletionTool, ChatCompletionToolFunction,
                 ChatCompletionUserMessageParam,
             },
         },
@@ -78,7 +79,8 @@ impl DeepSeek {
         sender: UnboundedSender<ProviderEvent>,
     ) -> Result<ProviderResponse, ProviderError> {
         let body = self.build_openai_request(&request);
-        debug!("OpenAI request body: {:?}", body);
+        #[cfg(debug_assertions)]
+        debug!("OpenAI request body: {:?}", serde_json::to_string(&body));
         let url = format!("{}/v1/chat/completions", self.config.api_base);
         let resp = self
             .client
@@ -87,6 +89,15 @@ impl DeepSeek {
             .json(&body)
             .send()
             .await?;
+        if resp.status() != 200 {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ProviderError::Other(anyhow::anyhow!(
+                "OpenAI API error: status {}, body {}",
+                status,
+                text
+            )));
+        }
         let sse = resp
             .events()
             .await
@@ -124,6 +135,8 @@ impl DeepSeek {
             let param = convert_to_openai_message(msg);
             messages.push(param);
         }
+        let tools = build_openai_tools(request.tool_specs());
+
         ChatCompletionRequest {
             model: self.config.model.clone(),
             messages,
@@ -132,6 +145,7 @@ impl DeepSeek {
             top_p: self.config.top_p,
             max_tokens: self.config.max_tokens,
             stop: None,
+            tools,
         }
     }
 
@@ -143,7 +157,8 @@ impl DeepSeek {
         sender: UnboundedSender<ProviderEvent>,
     ) -> Result<ProviderResponse, ProviderError> {
         let body = self.build_anthropic_body(&request);
-        debug!("Anthropic request body: {:?}", body);
+        #[cfg(debug_assertions)]
+        debug!("Anthropic request body: {:?}", serde_json::to_string(&body));
         let url = format!("{}/v1/messages", self.config.api_base);
         let resp = self
             .client
@@ -180,18 +195,20 @@ impl DeepSeek {
             .map(|msg| to_anthropic_message(msg))
             .collect();
 
+        let tools = build_anthropic_tools(request.tool_specs());
+
         CreateMessageRequest {
             content,
             model: self.config.model.clone(),
             metadata: None,
-            ouput_config: None,
+            output_config: None,
             stop_sequences: None,
             stream: true,
             system: request.system_prompt.clone(),
             temperature: self.config.temperature,
             thinking: None,
             tool_choice: None,
-            tools: None,
+            tools,
             top_p: self.config.top_p,
             top_k: self.config.top_k,
             max_tokens: self.config.max_tokens,
@@ -221,7 +238,7 @@ impl ResponseAccumulator {
             ProviderEvent::Content(s) => self.text.push_str(s),
             ProviderEvent::ReasoningContent(s) => self.reasoning.push_str(s),
             ProviderEvent::ToolCall(tc) => self.tool_calls.push(tc.clone()),
-            ProviderEvent::MessageStart | ProviderEvent::MessageEnd => {}
+            ProviderEvent::MessageStart | ProviderEvent::MessageEnd(_) => {}
         }
     }
 
@@ -250,6 +267,43 @@ impl ResponseAccumulator {
 
         AssistantMessage { blocks }
     }
+}
+
+// ── Tool spec conversion helpers ──
+
+fn build_openai_tools(specs: &[ToolSpec]) -> Option<Vec<ChatCompletionTool>> {
+    if specs.is_empty() {
+        return None;
+    }
+    Some(
+        specs
+            .iter()
+            .map(|s| ChatCompletionTool {
+                tool_type: "function".into(),
+                function: ChatCompletionToolFunction {
+                    name: s.name.clone(),
+                    description: s.description.clone(),
+                    parameters: s.parameter_schema.clone(),
+                },
+            })
+            .collect(),
+    )
+}
+
+fn build_anthropic_tools(specs: &[ToolSpec]) -> Option<Vec<crate::parser::anthropic::types::Tool>> {
+    if specs.is_empty() {
+        return None;
+    }
+    Some(
+        specs
+            .iter()
+            .map(|s| crate::parser::anthropic::types::Tool {
+                name: s.name.clone(),
+                description: Some(s.description.clone()),
+                input_schema: s.parameter_schema.clone(),
+            })
+            .collect(),
+    )
 }
 
 // ── Message conversion helpers ──
@@ -325,9 +379,7 @@ fn convert_to_openai_message(msg: &Message) -> ChatCompletionMessageParam {
     }
 }
 
-fn convert_tool_calls(
-    tool_calls: &[ToolCall],
-) -> Option<Vec<crate::parser::openaiv1::types::ChatCompletionMessageToolCall>> {
+fn convert_tool_calls(tool_calls: &[ToolCall]) -> Option<Vec<ChatCompletionMessageToolCall>> {
     if tool_calls.is_empty() {
         return None;
     }
@@ -335,10 +387,13 @@ fn convert_tool_calls(
         tool_calls
             .iter()
             .map(|tc| {
-                crate::parser::openaiv1::types::ChatCompletionMessageToolCall::ChatCompletionMessageFunctionToolCall(
-                    crate::parser::openaiv1::types::ChatCompletionMessageFunctionToolCall {
-                        name: tc.name.clone(),
-                        arguments: tc.args.to_string(),
+                ChatCompletionMessageToolCall::ChatCompletionMessageFunctionToolCall(
+                    ChatCompletionMessageFunctionToolCall {
+                        id: tc.id.clone(),
+                        function: crate::parser::openaiv1::types::Function {
+                            name: tc.name.clone(),
+                            arguments: serde_json::to_string(&tc.args).unwrap_or_default(),
+                        },
                     },
                 )
             })

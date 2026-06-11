@@ -20,4 +20,6 @@ pub struct Thread {
 
     #[has_many]
     pub turns: Deferred<Vec<crate::turn::Turn>>,
+    #[has_many]
+    pub middlewares: Deferred<Vec<crate::middleware::Middleware>>,
 }

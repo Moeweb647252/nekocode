@@ -12,21 +12,21 @@ pub async fn delete_thread(
     let turns = toasty::query!(Turn FILTER .thread_id == #(payload.id))
         .exec(&mut state.db)
         .await?;
-    let mut transction = state.db.transaction().await?;
+    let mut transaction = state.db.transaction().await?;
     for turn in turns {
         toasty::query!(Message FILTER .turn_id == #(turn.id))
             .delete()
-            .exec(&mut transction)
+            .exec(&mut transaction)
             .await?;
     }
     toasty::query!(Turn FILTER .thread_id == #(payload.id))
         .delete()
-        .exec(&mut transction)
+        .exec(&mut transaction)
         .await?;
     toasty::query!(Thread FILTER .id == #(payload.id))
         .delete()
-        .exec(&mut transction)
+        .exec(&mut transaction)
         .await?;
-    transction.commit().await?;
+    transaction.commit().await?;
     ApiResponse::ok(())
 }

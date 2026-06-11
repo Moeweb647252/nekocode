@@ -5,12 +5,12 @@ use futures_util::StreamExt;
 
 pub mod types;
 
-use crate::sse::ServerSentEvents;
+use crate::{parser::openaiv1::types::FinishReason::ContentFilter, sse::ServerSentEvents};
 use nekocode_core::provider::{ProviderError, ProviderEvent, ProviderUsage};
-use nekocode_types::tool::ToolCall;
+use nekocode_types::{generate::StopReason, tool::ToolCall};
 use types::{
-    ChatCompletionStreamDeltaToolCall, ChatCompletionStreamResponse,
-    ChatCompletionStreamUsage, FinishReason,
+    ChatCompletionStreamDeltaToolCall, ChatCompletionStreamResponse, ChatCompletionStreamUsage,
+    FinishReason,
 };
 
 struct PendingOpenAIToolCall {
@@ -49,10 +49,10 @@ impl OpenAIV1Stream {
             let event = event.map_err(|e| anyhow!("Error reading event: {}", e))?;
             let data = event.data.trim();
             if data == "[DONE]" {
-                return Ok(self.flush_pending_tool_calls().or(Some(ProviderEvent::MessageEnd)));
+                return Ok(self.flush_pending_tool_calls().or(None));
             }
-            let chunk: ChatCompletionStreamResponse = serde_json::from_str(data)
-                .map_err(|e| ProviderError::DeserializationError(e))?;
+            let chunk: ChatCompletionStreamResponse =
+                serde_json::from_str(data).map_err(|e| ProviderError::DeserializationError(e))?;
             if let Some(event) = self.handle_chunk(&chunk) {
                 return Ok(Some(event));
             }
@@ -90,12 +90,28 @@ impl OpenAIV1Stream {
             // Flush pending tool calls when the stream signals completion.
             if let Some(finish_reason) = &choice.finish_reason {
                 match finish_reason {
-                    FinishReason::ToolCalls | FinishReason::Stop => {
+                    FinishReason::ToolCalls => {
                         if let Some(event) = self.flush_pending_tool_calls() {
                             return Some(event);
                         }
                     }
-                    _ => {}
+                    FinishReason::FunctionCall => {
+                        // For function calls, we also flush pending tool calls immediately.
+                        if let Some(event) = self.flush_pending_tool_calls() {
+                            return Some(event);
+                        }
+                    }
+                    FinishReason::Length => {
+                        return Some(ProviderEvent::MessageEnd(StopReason::Length));
+                    }
+                    FinishReason::Stop => {
+                        return Some(ProviderEvent::MessageEnd(StopReason::Stop));
+                    }
+                    ContentFilter => {
+                        return Some(ProviderEvent::MessageEnd(StopReason::Error(
+                            "Content filtered".to_string(),
+                        )));
+                    }
                 }
             }
         }
@@ -103,14 +119,14 @@ impl OpenAIV1Stream {
     }
 
     fn apply_tool_call_delta(&mut self, tc: &ChatCompletionStreamDeltaToolCall) {
-        let pending = self
-            .pending_tool_calls
-            .entry(tc.index)
-            .or_insert_with(|| PendingOpenAIToolCall {
-                id: None,
-                name: None,
-                arguments: String::new(),
-            });
+        let pending =
+            self.pending_tool_calls
+                .entry(tc.index)
+                .or_insert_with(|| PendingOpenAIToolCall {
+                    id: None,
+                    name: None,
+                    arguments: String::new(),
+                });
         if let Some(id) = &tc.id {
             pending.id = Some(id.clone());
         }
@@ -128,8 +144,8 @@ impl OpenAIV1Stream {
         let indices: Vec<usize> = self.pending_tool_calls.keys().copied().collect();
         for index in indices {
             if let Some(pending) = self.pending_tool_calls.remove(&index) {
-                let args: serde_json::Value = serde_json::from_str(&pending.arguments)
-                    .unwrap_or(serde_json::Value::Null);
+                let args: serde_json::Value =
+                    serde_json::from_str(&pending.arguments).unwrap_or(serde_json::Value::Null);
                 return Some(ProviderEvent::ToolCall(ToolCall {
                     id: pending.id.unwrap_or_default(),
                     name: pending.name.unwrap_or_default(),

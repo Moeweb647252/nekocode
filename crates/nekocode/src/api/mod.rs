@@ -111,6 +111,8 @@ pub mod prelude {
         api::{ApiResponse, ApiResult, error::ApiError},
     };
     pub use axum::{Json, extract::State};
-    pub use nekocode_entities::{message::Message, thread::Thread, token::Token, turn::Turn};
+    pub use nekocode_entities::{
+        message::Message, middleware::Middleware, thread::Thread, token::Token, turn::Turn,
+    };
     pub use serde::{Deserialize, Serialize};
 }

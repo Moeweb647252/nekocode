@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use serde::Serializer;
 use toasty::{Db, Json, query};
 
-use crate::{message::Message, thread::Thread, token::Token, turn::Turn};
+use crate::{message::Message, middleware::Middleware, thread::Thread, token::Token, turn::Turn};
 
 pub mod message;
+pub mod middleware;
 pub mod thread;
 pub mod token;
 pub mod turn;
@@ -15,7 +16,7 @@ pub async fn prepare_db(db_path: PathBuf) -> toasty::Result<Db> {
         std::fs::File::create(&db_path)?;
     }
     let mut db = Db::builder()
-        .models(toasty::models!(Message, Thread, Turn, Token))
+        .models(toasty::models!(Message, Thread, Turn, Token, Middleware))
         .connect(&format!("turso://{}", db_path.to_string_lossy()))
         .await?;
     if query!(Message LIMIT 1).exec(&mut db).await.is_err() {

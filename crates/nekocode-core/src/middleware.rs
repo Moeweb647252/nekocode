@@ -1,11 +1,14 @@
 use async_trait::async_trait;
-use nekocode_types::tool::ToolRegistry;
+use nekocode_types::{
+    generate::{Message, MessageContent},
+    tool::ToolRegistry,
+};
 
 use crate::types::{GenerateRequest, GenerateResponse};
 
 pub enum AgentControlFlow {
     Output,
-    GenerateWith(GenerateRequest),
+    GenerateWith(MessageContent),
 }
 
 #[async_trait]
@@ -13,7 +16,7 @@ pub trait Middleware: Send + Sync {
     async fn before_generate(
         &self,
         _: &mut GenerateRequest,
-        _: &ToolRegistry,
+        _: &mut ToolRegistry,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }

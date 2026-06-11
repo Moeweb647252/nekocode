@@ -5,7 +5,7 @@ pub struct CreateMessageRequest {
     pub content: Vec<MessageParam>,
     pub model: String,
     pub metadata: Option<Metadata>,
-    pub ouput_config: Option<OutputConfig>,
+    pub output_config: Option<OutputConfig>,
     pub stop_sequences: Option<Vec<String>>,
     pub stream: bool,
     pub system: Option<String>,
@@ -244,7 +244,7 @@ pub struct Message {
 pub enum ContentBlock {
     #[serde(rename = "text")]
     TextBlock { text: String },
-    #[serde(rename = "tinking")]
+    #[serde(rename = "thinking")]
     ThinkingBlock { signature: String, thinking: String },
     #[serde(rename = "tool_use")]
     ToolUseBlock {

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
 use axum::{extract::ws, response::Response};
+use nekocode_core::agent::RunLoopSummary;
 use tracing::error;
 
 use crate::api::{
@@ -52,13 +53,13 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
     if state.generate_states.contains_key(&payload.thread_id) {
         bail!("thread generating");
     }
-    let (boardcast_tx, broadcast_rx) = tokio::sync::broadcast::channel(100);
-    let cancallation_token = tokio_util::sync::CancellationToken::new();
+    let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel(100);
+    let cancellation_token = tokio_util::sync::CancellationToken::new();
     let generate_state = Arc::new(GenerateState {
         thread_id: payload.thread_id,
         deltas: boxcar::Vec::new(),
-        boardcast: broadcast_rx,
-        cancallation_token: cancallation_token.clone(),
+        broadcast: broadcast_rx,
+        cancellation_token: cancellation_token.clone(),
     });
     match state.generate_states.entry(payload.thread_id) {
         dashmap::Entry::Occupied(_) => {
@@ -82,7 +83,7 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
     let task = async {
         while let Some(event) = rx.recv().await {
             generate_state.deltas.push(event.clone());
-            boardcast_tx.send(event.clone()).map_err(|_| anyhow!(""))?;
+            broadcast_tx.send(event.clone()).map_err(|_| anyhow!(""))?;
             socket
                 .send(ws::Message::Text(
                     serde_json::to_string(&WebSocketEvent::Delta(event))?.try_into()?,
@@ -93,7 +94,7 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
     };
     let _ = tokio::select! {
         res = task => res?,
-        _ = cancallation_token.cancelled() => {
+        _ = cancellation_token.cancelled() => {
             handle.abort();
             socket.send(ws::Message::Text(
                 serde_json::to_string(&WebSocketEvent::Stop(StopReason {

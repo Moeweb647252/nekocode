@@ -1,5 +1,5 @@
 use nekocode_types::{
-    generate::{self, AssistantMessage},
+    generate::{self, AssistantMessage, StopReason},
     tool::ToolCall,
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -55,7 +55,7 @@ pub struct ProviderUsage {
 #[derive(Clone)]
 pub enum ProviderEvent {
     MessageStart,
-    MessageEnd,
+    MessageEnd(StopReason),
     Content(String),
     ReasoningContent(String),
     ToolCall(ToolCall),
@@ -69,7 +69,9 @@ impl Into<generate::StreamEvent> for &ProviderEvent {
                     role: generate::Role::Assistant,
                 })
             }
-            ProviderEvent::MessageEnd => generate::StreamEventData::MessageEnd,
+            ProviderEvent::MessageEnd(reason) => {
+                generate::StreamEventData::MessageEnd(reason.clone())
+            }
             ProviderEvent::Content(text) => generate::StreamEventData::Content(text.clone()),
             ProviderEvent::ReasoningContent(text) => {
                 generate::StreamEventData::ReasoningContent(text.clone())

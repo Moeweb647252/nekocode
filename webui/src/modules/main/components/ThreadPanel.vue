@@ -1,12 +1,5 @@
 <script setup lang="ts">
-import type {
-  AgentEvent,
-  AssistantBlock,
-  ChatMessage,
-  GetThreadResponse,
-  Thread,
-  ToolCall,
-} from "@/api/types.ts";
+import type { AgentEvent, ChatMessage, GetThreadResponse, Thread } from "@/api/types.ts";
 import InputArea from "./InputArea.vue";
 import MessageBox from "./MessageBox.vue";
 import { activateThread, getThread } from "@/api/thread.ts";
@@ -29,40 +22,16 @@ onMounted(async () => {
   }
 });
 
-interface PendingAssistant {
-  content: string;
-  reasoning: string;
-  toolCalls: ToolCall[];
-}
-
-function emptyPending(): PendingAssistant {
-  return { content: "", reasoning: "", toolCalls: [] };
-}
-
-function finalizePending(pending: PendingAssistant): ChatMessage {
-  const blocks: AssistantBlock[] = [];
-  if (pending.content || pending.reasoning) {
-    blocks.push({
-      type: "text",
-      content: pending.content,
-      reasoningContent: pending.reasoning || null,
-    });
-  }
-  for (const tc of pending.toolCalls) {
-    blocks.push({ type: "toolCall", ...tc });
-  }
-  return { type: "assistant", data: { blocks } };
-}
-
 const sendMessage = async () => {
   const input = userInput.value.trim();
   if (!input) return;
   userInput.value = "";
 
-  // Append the user message immediately.
+  // 立即追加用户消息
   streamingMessages.value = [{ type: "user", data: { type: "text", content: input } }];
 
-  let pending: PendingAssistant | null = null;
+  // 当前正在构建的 assistant 消息（直接引用 streamingMessages 中的最后一条）
+  let currentAssistantMsg: ChatMessage | null = null;
 
   streamGenerate(thread.value!.id, input, {
     onDelta: (event: AgentEvent) => {
@@ -72,37 +41,59 @@ const sendMessage = async () => {
 
       switch (d.type) {
         case "messageStart": {
-          // Finalize any previous pending message before starting a new one.
-          if (pending) {
-            streamingMessages.value = [...streamingMessages.value, finalizePending(pending)];
-          }
-          pending = emptyPending();
+          // 创建新的 assistant 消息并推入列表
+          const newMsg: ChatMessage = {
+            type: "assistant",
+            data: { blocks: reactive([]) },
+          };
+          streamingMessages.value.push(newMsg);
+          currentAssistantMsg = newMsg;
           break;
         }
         case "content": {
-          if (pending) pending.content += d.data;
+          if (!currentAssistantMsg) return;
+          if (currentAssistantMsg.type !== "assistant") return;
+          const blocks = currentAssistantMsg.data.blocks;
+          // 确保最后一个 block 是文本块（可追加）
+          let lastBlock = blocks[blocks.length - 1];
+          if (!lastBlock || lastBlock.type !== "text") {
+            lastBlock = { type: "text", content: "", reasoningContent: null };
+            blocks.push(lastBlock);
+          }
+          lastBlock.content += d.data;
           break;
         }
         case "reasoningContent": {
-          if (pending) pending.reasoning += d.data;
+          if (!currentAssistantMsg) return;
+          if (currentAssistantMsg.type !== "assistant") return;
+          const blocks = currentAssistantMsg.data.blocks;
+          let lastBlock = blocks[blocks.length - 1];
+          if (!lastBlock || lastBlock.type !== "text") {
+            lastBlock = { type: "text", content: "", reasoningContent: null };
+            blocks.push(lastBlock);
+          }
+          lastBlock.reasoningContent = (lastBlock.reasoningContent ?? "") + d.data;
           break;
         }
         case "toolCall": {
-          if (pending) pending.toolCalls.push(d.data);
+          if (!currentAssistantMsg) return;
+          if (currentAssistantMsg.type !== "assistant") return;
+          currentAssistantMsg.data.blocks.push({
+            type: "toolCall",
+            ...d.data,
+          });
           break;
         }
         case "toolCallResult": {
-          streamingMessages.value = [
-            ...streamingMessages.value,
-            { type: "toolCallResult", data: d.data },
-          ];
+          streamingMessages.value.push({
+            type: "toolCallResult",
+            data: d.data,
+          });
           break;
         }
         case "messageEnd": {
-          if (pending) {
-            streamingMessages.value = [...streamingMessages.value, finalizePending(pending)];
-            pending = null;
-          }
+          // 当前消息已完整，清空引用即可
+          currentAssistantMsg = null;
           break;
         }
       }

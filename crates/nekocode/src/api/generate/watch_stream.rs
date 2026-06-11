@@ -50,7 +50,7 @@ pub async fn handle_websocket(
     drop(generate_state_ref);
 
     // Subscribe first so no events are missed between replay and live listening.
-    let mut rx = generate_state.boardcast.resubscribe();
+    let mut rx = generate_state.broadcast.resubscribe();
 
     // Replay historical deltas so late joiners catch up.
     // Track the index one past the last replayed event for dedup.
@@ -63,7 +63,7 @@ pub async fn handle_websocket(
         .await?;
     }
 
-    let cancellation = generate_state.cancallation_token.clone();
+    let cancellation = generate_state.cancellation_token.clone();
 
     loop {
         tokio::select! {

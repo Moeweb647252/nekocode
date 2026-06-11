@@ -23,6 +23,7 @@ pub struct AssistantMessage {
 #[serde(rename_all = "camelCase")]
 pub enum AssistantContentBlock {
     ToolCall(ToolCall),
+    #[serde(rename_all = "camelCase")]
     Text {
         content: String,
         reasoning_content: Option<String>,
@@ -41,11 +42,19 @@ pub enum MessageContent {
 #[serde(tag = "type", content = "data")]
 pub enum StreamEventData {
     MessageStart(MessageMetadata),
-    MessageEnd,
+    MessageEnd(StopReason),
     Content(String),
     ReasoningContent(String),
     ToolCall(ToolCall),
     ToolCallResult(ToolCallResult),
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StopReason {
+    Stop,
+    Length,
+    Error(String),
 }
 
 #[derive(Debug, Clone, Serialize)]

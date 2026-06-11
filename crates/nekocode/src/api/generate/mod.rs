@@ -11,8 +11,8 @@ pub type ThreadId = u64;
 pub struct GenerateState {
     pub thread_id: ThreadId,
     pub deltas: boxcar::Vec<AgentEvent>,
-    pub boardcast: tokio::sync::broadcast::Receiver<AgentEvent>,
-    pub cancallation_token: tokio_util::sync::CancellationToken,
+    pub broadcast: tokio::sync::broadcast::Receiver<AgentEvent>,
+    pub cancellation_token: tokio_util::sync::CancellationToken,
 }
 
 #[derive(Serialize)]

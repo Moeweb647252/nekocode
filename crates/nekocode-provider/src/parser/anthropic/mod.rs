@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::anyhow;
 use futures_util::StreamExt;
-use nekocode_types::tool::ToolCall;
+use nekocode_types::{generate::StopReason, tool::ToolCall};
 
 pub mod types;
 
@@ -108,7 +108,9 @@ impl AnthropicStream {
             }
 
             RawMessageStreamEvent::RawMessageDeltaEvent(_) => None,
-            RawMessageStreamEvent::RawMessageStopEvent => Some(ProviderEvent::MessageEnd),
+            RawMessageStreamEvent::RawMessageStopEvent => {
+                Some(ProviderEvent::MessageEnd(StopReason::Stop))
+            }
         }
     }
 
