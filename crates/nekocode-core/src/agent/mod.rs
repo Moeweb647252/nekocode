@@ -1,5 +1,5 @@
 pub mod error;
-use std::sync::Arc;
+use std::{any::Any, sync::Arc};
 
 use anyhow::anyhow;
 use nekocode_entities::{thread::Thread, turn::Turn};
@@ -44,6 +44,7 @@ pub struct Agent {
     pub db: toasty::Db,
     pub middlewares: Arc<Vec<Box<dyn Middleware>>>,
     pub provider: Arc<dyn crate::provider::Provider>,
+    pub extensions: Arc<dashmap::DashMap<String, Box<dyn Any + Send + Sync>>>,
 }
 
 impl Agent {

@@ -28,6 +28,7 @@ clap = { version = "4.6", features = ["derive"] }
 boxcar = "0.2"
 toml = "1.1"
 scopeguard = "1.2"
+sdd = "4.8"
 nekocode-core = { path = "crates/nekocode-core" }
 nekocode-provider = { path = "crates/nekocode-provider" }
 nekocode-entities = { path = "crates/nekocode-entities" }

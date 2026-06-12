@@ -42,12 +42,14 @@ pub async fn activate_thread(
         )))?;
     let provider = nekocode_provider::build_from_config(&model_config.data);
 
+    let extensions = Arc::new(dashmap::DashMap::new());
+
     let mut middlewares: Vec<Box<dyn nekocode_core::middleware::Middleware>> = Vec::new();
 
     for i in thread.middlewares.get() {
         match i.name.as_str() {
             "shell" => {
-                middlewares.push(Box::new(nekocode_shell::Shell {}));
+                middlewares.push(Box::new(nekocode_shell::Shell::new(extensions.clone())));
             }
             _ => {
                 tracing::warn!("Unknown middleware: {}", i.name);
@@ -66,6 +68,7 @@ pub async fn activate_thread(
                 db: state.db.clone(),
                 middlewares: Arc::new(middlewares),
                 provider: Arc::from(provider),
+                extensions,
             })));
         }
     }

@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use async_trait::async_trait;
 use nekocode_types::{
     generate::{Message, MessageContent},

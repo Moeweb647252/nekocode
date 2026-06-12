@@ -15,3 +15,4 @@ toasty.workspace = true
 nekocode-types.workspace = true
 nekocode-entities.workspace = true
 jiff.workspace = true
+dashmap.workspace = true
