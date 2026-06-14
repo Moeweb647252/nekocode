@@ -469,6 +469,109 @@ impl Tool for FetchShellOutputTool {
     }
 }
 
+/// Wait for a previously spawned long-running shell to finish, blocking up to
+/// a caller-supplied timeout. On completion, returns the (possibly empty) tail
+/// of output produced since the last fetch plus the exit status. On timeout the
+/// call still succeeds — it simply tells the model the shell is still running,
+/// so the model can decide whether to wait again or cancel. The shell is never
+/// killed by this tool.
+pub struct WaitShellDoneTool {
+    pub shell_states: Arc<dashmap::DashMap<u32, ShellTaskState>>,
+}
+
+#[async_trait::async_trait]
+impl Tool for WaitShellDoneTool {
+    fn spec(&self) -> nekocode_types::tool::ToolSpec {
+        nekocode_types::tool::ToolSpec {
+            name: "wait_shell_done".to_string(),
+            description: "Block until a previously spawned shell finishes (process exits) or the timeout elapses. Use after spawning a command whose completion you need before proceeding; this avoids busy-polling with fetch_shell_output. On timeout the call returns a non-error 'timeout' status describing the still-running shell — it does NOT kill the process."
+                .to_string(),
+            parameter_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "shell_id": {
+                        "type": "integer",
+                        "description": "The shell id returned by spawn_shell."
+                    },
+                    "timeout": {
+                        "type": "number",
+                        "description": "Maximum time to wait, in seconds. Must be positive. If the shell does not finish within this time, the call returns a 'timeout' status (the shell keeps running)."
+                    }
+                },
+                "required": ["shell_id", "timeout"]
+            }),
+        }
+    }
+
+    async fn call(
+        &self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolError> {
+        let shell_id = parse_shell_id(&params)?;
+        let timeout_secs = params
+            .get("timeout")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| {
+                ToolError::InvalidParameters("Missing 'timeout' parameter".into())
+            })?;
+        if !timeout_secs.is_finite() || timeout_secs <= 0.0 {
+            return Err(ToolError::InvalidParameters(format!(
+                "'timeout' must be a positive number of seconds, got {timeout_secs}"
+            )));
+        }
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_secs_f64(timeout_secs);
+
+        loop {
+            // The shell is "done" when either its is_running flag flips to
+            // false (supervisor sets this right after the process exits) or the
+            // entry is removed from the map (supervisor removes it immediately
+            // after, so an absent entry also means done).
+            let done_state = match self.shell_states.get(&shell_id) {
+                Some(entry) => {
+                    if !entry.is_running.load(atomic::Ordering::SeqCst) {
+                        // Finished but the entry may still be present for a
+                        // brief window; drain the tail so the caller sees the
+                        // final output and the [exit_code=...] marker.
+                        Some(drain_output(&entry))
+                    } else {
+                        None
+                    }
+                }
+                None => {
+                    // Entry gone: the shell already finished and was cleaned
+                    // up before we observed it. There is no tail to return.
+                    Some(String::new())
+                }
+            };
+            if let Some(tail) = done_state {
+                return Ok(serde_json::json!({
+                    "shell_id": shell_id,
+                    "status": "done",
+                    "output": tail,
+                }));
+            }
+
+            // Check the timeout before sleeping; if it has elapsed, tell the
+            // model the shell is still running (non-error) and return.
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return Ok(serde_json::json!({
+                    "shell_id": shell_id,
+                    "status": "timeout",
+                    "message": "The shell is still running; the wait timed out. The process was not killed. You may call wait_shell_done again, fetch_shell_output, or cancel_shell."
+                }));
+            }
+
+            // Sleep until the earlier of the deadline and the next poll tick.
+            let poll = tokio::time::Instant::now()
+                .checked_add(Duration::from_millis(100))
+                .unwrap_or(deadline);
+            tokio::time::sleep_until(poll.min(deadline)).await;
+        }
+    }
+}
+
 /// Read all lines at index >= cursor from the buffer, then advance the cursor
 /// to the new length. Returns the joined new lines.
 fn drain_output(state: &ShellTaskState) -> String {

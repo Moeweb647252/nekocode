@@ -99,6 +99,12 @@ impl Middleware for Shell {
                 shell_states: self.shell_states.clone(),
             }),
         );
+        registry.insert(
+            "wait_shell_done".into(),
+            std::sync::Arc::new(tool::WaitShellDoneTool {
+                shell_states: self.shell_states.clone(),
+            }),
+        );
         Ok(())
     }
 }

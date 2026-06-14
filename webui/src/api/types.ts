@@ -94,7 +94,7 @@ export interface ToolCallResult {
 
 /** serde(tag = "type") with explicit rename. */
 export type ToolCallResultInner =
-  | { type: 'success'; success: unknown }
+  | { type: 'success';}
   | { type: 'error'; error: string }
 
 // ════════════════════════════════════════════════════════════════════
