@@ -8,6 +8,7 @@ nekocode-core.workspace = true
 async-trait.workspace = true
 nekocode-types.workspace = true
 anyhow.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 boxcar.workspace = true

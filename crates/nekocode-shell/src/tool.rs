@@ -2,29 +2,44 @@ use std::{
     process::Stdio,
     sync::{
         Arc,
-        atomic::{self, AtomicBool},
+        atomic::{self, AtomicU32, AtomicUsize},
     },
+    time::Duration,
 };
 
-use nekocode_types::tool::Tool;
-use sdd::{AtomicOwned, Guard, Owned, Tag};
+use nekocode_types::tool::{Tool, ToolError};
+use sdd::{AtomicOwned, Guard};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt},
-    select,
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     sync::mpsc,
 };
 use tracing::debug;
 
-use crate::ShellTaskState;
+use crate::{ShellTaskState, config::ShellConfig};
 
-pub struct OnceShellTool {}
+/// Push a line into the shared output buffer. The buffer is wrapped in an
+/// `AtomicOwned` so it can be swapped atomically; readers must load under a
+/// [`sdd::Guard`].
+fn push_output(buf: &AtomicOwned<boxcar::Vec<String>>, line: String) {
+    let guard = Guard::new();
+    if let Some(v) = buf.load(atomic::Ordering::Acquire, &guard).as_ref() {
+        v.push(line);
+    }
+}
+
+/// One-shot shell execution: spawn `<shell> -c <command>`, capture stdout /
+/// stderr, and return them along with the exit code. Honors the working
+/// directory, env vars, and timeout from [`ShellConfig`].
+pub struct OnceShellTool {
+    pub config: Arc<ShellConfig>,
+}
 
 #[async_trait::async_trait]
 impl Tool for OnceShellTool {
     fn spec(&self) -> nekocode_types::tool::ToolSpec {
         nekocode_types::tool::ToolSpec {
             name: "shell".to_string(),
-            description: "A tool for executing shell commands.".to_string(),
+            description: "A tool for executing a one-shot shell command.".to_string(),
             parameter_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -41,41 +56,86 @@ impl Tool for OnceShellTool {
     async fn call(
         &self,
         params: serde_json::Value,
-    ) -> Result<serde_json::Value, nekocode_types::tool::ToolError> {
+    ) -> Result<serde_json::Value, ToolError> {
         let command = params
             .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                nekocode_types::tool::ToolError::InvalidParameters(
-                    "Missing 'command' parameter".into(),
-                )
-            })?;
+            .ok_or_else(|| ToolError::InvalidParameters("Missing 'command' parameter".into()))?;
 
-        let output = tokio::process::Command::new("bash")
-            .arg("-c")
-            .arg(command)
-            .stderr(Stdio::piped())
+        let mut cmd = tokio::process::Command::new(self.config.program());
+        cmd.arg("-c").arg(command);
+        cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| nekocode_types::tool::ToolError::ExecutionError(e.to_string()))?;
+            .stderr(Stdio::piped());
+        self.config.apply(&mut cmd);
 
-        if output.status.success() {
-            Ok(serde_json::json!({
-                "stdout": String::from_utf8_lossy(&output.stdout),
-                "stderr": String::from_utf8_lossy(&output.stderr),
-                "exit_code": output.status.code(),
-            }))
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
+
+        // Take the pipes so we can wait + kill via the (borrowing) `wait`,
+        // while still collecting stdout/stderr.
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| ToolError::ExecutionError("Failed to capture stdout".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| ToolError::ExecutionError("Failed to capture stderr".into()))?;
+
+        let collect = async {
+            use tokio::io::AsyncReadExt;
+            let (mut stdout, mut stderr) = (stdout, stderr);
+            let (mut out_buf, mut err_buf) = (Vec::new(), Vec::new());
+            let (out, err) = tokio::join!(
+                stdout.read_to_end(&mut out_buf),
+                stderr.read_to_end(&mut err_buf),
+            );
+            out?;
+            err?;
+            let status = child.wait().await?;
+            Ok::<_, std::io::Error>((out_buf, err_buf, status))
+        };
+
+        let (stdout, stderr, status) = if let Some(secs) = self.config.timeout_secs {
+            match tokio::time::timeout(Duration::from_secs(secs), collect).await {
+                Ok(res) => res.map_err(|e| ToolError::ExecutionError(e.to_string()))?,
+                Err(_) => {
+                    // Timed out. `collect` is dropped here, releasing `&mut child`,
+                    // so we can signal the child before bailing. Reaping is left
+                    // to the OS.
+                    let _ = child.start_kill();
+                    return Err(ToolError::ExecutionError(format!(
+                        "command timed out after {secs}s"
+                    )));
+                }
+            }
         } else {
-            Err(nekocode_types::tool::ToolError::ExecutionError(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ))
-        }
+            collect
+                .await
+                .map_err(|e| ToolError::ExecutionError(e.to_string()))?
+        };
+
+        // Always return a structured result so the model can see stdout even
+        // on non-zero exits (previously the whole result was lost into an
+        // error string).
+        Ok(serde_json::json!({
+            "stdout": String::from_utf8_lossy(&stdout),
+            "stderr": String::from_utf8_lossy(&stderr),
+            "exit_code": status.code(),
+        }))
     }
 }
 
+/// Spawn a long-running shell process. Output is buffered into an append-only
+/// ring per shell id and read incrementally via `fetch_shell_output`. A
+/// single supervisor task owns the child, drains stdout + stderr to EOF
+/// independently, and cleans up the shell state on exit or cancellation.
 pub struct SpawnShellTool {
     pub shell_states: Arc<dashmap::DashMap<u32, ShellTaskState>>,
+    pub config: Arc<ShellConfig>,
+    pub allocate_id: Arc<AtomicU32>,
 }
 
 #[async_trait::async_trait]
@@ -100,126 +160,149 @@ impl Tool for SpawnShellTool {
     async fn call(
         &self,
         params: serde_json::Value,
-    ) -> Result<serde_json::Value, nekocode_types::tool::ToolError> {
+    ) -> Result<serde_json::Value, ToolError> {
         let command = params
             .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                nekocode_types::tool::ToolError::InvalidParameters(
-                    "Missing 'command' parameter".into(),
-                )
-            })?;
+            .ok_or_else(|| ToolError::InvalidParameters("Missing 'command' parameter".into()))?;
 
-        let mut child = tokio::process::Command::new("bash")
-            .arg("-c")
-            .arg(command)
-            .stdin(Stdio::piped())
+        let mut cmd = tokio::process::Command::new(self.config.program());
+        cmd.arg("-c").arg(command);
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        self.config.apply(&mut cmd);
+
+        let mut child = cmd
             .spawn()
-            .map_err(|e| nekocode_types::tool::ToolError::ExecutionError(e.to_string()))?;
+            .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
+        let pid = child.id();
 
-        let pid = child.id().ok_or_else(|| {
-            nekocode_types::tool::ToolError::ExecutionError("Failed to get child process ID".into())
-        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| ToolError::ExecutionError("Failed to capture stdout".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| ToolError::ExecutionError("Failed to capture stderr".into()))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| ToolError::ExecutionError("Failed to capture stdin".into()))?;
 
-        let stdout = child.stdout.take().ok_or_else(|| {
-            nekocode_types::tool::ToolError::ExecutionError("Failed to capture stdout".into())
-        })?;
-        let stderr = child.stderr.take().ok_or_else(|| {
-            nekocode_types::tool::ToolError::ExecutionError("Failed to capture stderr".into())
-        })?;
-        let mut stdin = child.stdin.take().ok_or_else(|| {
-            nekocode_types::tool::ToolError::ExecutionError("Failed to capture stdin".into())
-        })?;
+        let shell_id = self
+            .allocate_id
+            .fetch_add(1, atomic::Ordering::Relaxed);
         let output = Arc::new(AtomicOwned::new(boxcar::Vec::new()));
-        let (input_tx, mut input_rx) = mpsc::unbounded_channel();
-        let is_running = Arc::new(AtomicBool::new(true));
+        let output_cursor = Arc::new(AtomicUsize::new(0));
+        let (input_tx, mut input_rx) = mpsc::unbounded_channel::<String>();
+        let is_running = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let cancellation_token = tokio_util::sync::CancellationToken::new();
+
         self.shell_states.insert(
-            pid,
+            shell_id,
             ShellTaskState {
+                shell_id,
+                pid,
                 command: command.to_string(),
                 output: output.clone(),
+                output_cursor: output_cursor.clone(),
                 input: input_tx,
                 cancellation_token: cancellation_token.clone(),
                 is_running: is_running.clone(),
             },
         );
 
-        tokio::spawn(async move {
-            let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
-            let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
-
-            loop {
-                tokio::select! {
-                    line = stdout_reader.next_line() => {
-                        match line {
-                            Ok(Some(line)) => {
-                                let guard = Guard::new();
-                                if let Some(output) = output.load(atomic::Ordering::SeqCst, &guard).as_ref() {
-                                    output.push(line);
-                                }
-                            }
-                            Ok(None) => break, // EOF
-                            Err(e) => {
-                                debug!("Error reading stdout: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                    line = stderr_reader.next_line() => {
-                        match line {
-                            Ok(Some(line)) => {
-                                let guard = Guard::new();
-                                if let Some(output) = output.load(atomic::Ordering::SeqCst, &guard).as_ref() {
-                                    output.push(line);
-                                }
-                            }
-                            Ok(None) => break, // EOF
-                            Err(e) => {
-                                debug!("Error reading stderr: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-
-        tokio::spawn(async move {
-            while let Some(input) = input_rx.recv().await {
-                if let Err(e) = stdin.write_all(input.as_bytes()).await {
-                    debug!("Error writing to stdin: {}", e);
-                    break;
-                }
-                if let Err(e) = stdin.write_all(b"\n").await {
-                    debug!("Error writing newline to stdin: {}", e);
-                    break;
-                }
-            }
-        });
-
         let shell_states = self.shell_states.clone();
+
         tokio::spawn(async move {
-            select! {
+            // Reader tasks: each runs its stream to EOF independently, so a
+            // stdout EOF no longer drops the trailing stderr lines.
+            let out = output.clone();
+            let stdout_task = tokio::spawn(async move {
+                let mut lines = BufReader::new(stdout).lines();
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => push_output(&out, line),
+                        Ok(None) => break,
+                        Err(e) => {
+                            debug!("Error reading stdout: {}", e);
+                            break;
+                        }
+                    }
+                }
+            });
+            let out = output.clone();
+            let stderr_task = tokio::spawn(async move {
+                let mut lines = BufReader::new(stderr).lines();
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => push_output(&out, line),
+                        Ok(None) => break,
+                        Err(e) => {
+                            debug!("Error reading stderr: {}", e);
+                            break;
+                        }
+                    }
+                }
+            });
+
+            // Stdin pump: forward user input to the child. Terminating the
+            // channel (all SendShellInputTool clones dropped) closes stdin.
+            let stdin_task = tokio::spawn(async move {
+                while let Some(input) = input_rx.recv().await {
+                    if let Err(e) = stdin.write_all(input.as_bytes()).await {
+                        debug!("Error writing to stdin: {}", e);
+                        break;
+                    }
+                    // Only append a newline when the caller didn't already
+                    // terminate the line, so interactive typing is possible.
+                    if !input.ends_with('\n')
+                        && let Err(e) = stdin.write_all(b"\n").await
+                    {
+                        debug!("Error writing newline to stdin: {}", e);
+                        break;
+                    }
+                    let _ = stdin.flush().await;
+                }
+            });
+
+            // Wait for either cancellation or natural exit, then reap.
+            let exit_status = tokio::select! {
                 _ = cancellation_token.cancelled() => {
                     let _ = child.kill().await;
-                    is_running.store(false, atomic::Ordering::SeqCst);
-                    shell_states.remove(&pid);
+                    child.wait().await.ok()
                 }
-                _ = child.wait() => {
-                    is_running.store(false, atomic::Ordering::SeqCst);
-                }
+                status = child.wait() => status.ok(),
+            };
+
+            // Drain remaining output and stop pumps.
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
+            // Closing stdin makes the pump exit cleanly.
+            drop(stdin_task);
+
+            is_running.store(false, atomic::Ordering::SeqCst);
+            if let Some(status) = exit_status {
+                push_output(
+                    &output,
+                    format!("[exit_code={}]", status.code().unwrap_or(-1)),
+                );
+            } else {
+                push_output(&output, "[terminated]".to_string());
             }
+            shell_states.remove(&shell_id);
         });
 
         Ok(serde_json::json!({
+            "shell_id": shell_id,
             "pid": pid,
         }))
     }
 }
 
+/// Cancel a previously spawned long-running shell.
 pub struct CancelShellTool {
     pub shell_states: Arc<dashmap::DashMap<u32, ShellTaskState>>,
 }
@@ -233,12 +316,12 @@ impl Tool for CancelShellTool {
             parameter_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "pid": {
+                    "shell_id": {
                         "type": "integer",
-                        "description": "The process ID of the shell to cancel."
+                        "description": "The shell id returned by spawn_shell."
                     }
                 },
-                "required": ["pid"]
+                "required": ["shell_id"]
             }),
         }
     }
@@ -246,91 +329,22 @@ impl Tool for CancelShellTool {
     async fn call(
         &self,
         params: serde_json::Value,
-    ) -> Result<serde_json::Value, nekocode_types::tool::ToolError> {
-        let pid = params.get("pid").and_then(|v| v.as_u64()).ok_or_else(|| {
-            nekocode_types::tool::ToolError::InvalidParameters(
-                "Missing or invalid 'pid' parameter".into(),
-            )
-        })? as u32;
-
-        if let Some(entry) = self.shell_states.get(&pid) {
-            entry.cancellation_token.cancel();
-            Ok(serde_json::json!({
-                "status": "cancelled"
-            }))
-        } else {
-            Err(nekocode_types::tool::ToolError::InvalidParameters(format!(
-                "No active shell with pid {}",
-                pid
-            )))
+    ) -> Result<serde_json::Value, ToolError> {
+        let shell_id = parse_shell_id(&params)?;
+        match self.shell_states.get(&shell_id) {
+            Some(entry) => {
+                entry.cancellation_token.cancel();
+                Ok(serde_json::json!({ "status": "cancelled", "shell_id": shell_id }))
+            }
+            None => Err(ToolError::InvalidParameters(format!(
+                "No active shell with shell_id {}",
+                shell_id
+            ))),
         }
     }
 }
 
-pub struct FetchShellOutputTool {
-    pub shell_states: Arc<dashmap::DashMap<u32, ShellTaskState>>,
-}
-
-#[async_trait::async_trait]
-impl Tool for FetchShellOutputTool {
-    fn spec(&self) -> nekocode_types::tool::ToolSpec {
-        nekocode_types::tool::ToolSpec {
-            name: "fetch_shell_output".to_string(),
-            description: "A tool for fetching the output of a long-running shell process."
-                .to_string(),
-            parameter_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "pid": {
-                        "type": "integer",
-                        "description": "The process ID of the shell to fetch output from."
-                    }
-                },
-                "required": ["pid"]
-            }),
-        }
-    }
-
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, nekocode_types::tool::ToolError> {
-        let pid = params.get("pid").and_then(|v| v.as_u64()).ok_or_else(|| {
-            nekocode_types::tool::ToolError::InvalidParameters(
-                "Missing or invalid 'pid' parameter".into(),
-            )
-        })? as u32;
-
-        if let Some(entry) = self.shell_states.get(&pid) {
-            let output = entry.output.swap(
-                (Some(Owned::new(boxcar::Vec::new())), Tag::None),
-                atomic::Ordering::SeqCst,
-            );
-            let output_string: String = output
-                .0
-                .map(|v| {
-                    let mut sorted = v.iter().collect::<Vec<(usize, &String)>>();
-                    sorted.sort_by(|a, b| a.0.cmp(&b.0));
-                    sorted
-                        .into_iter()
-                        .map(|v| v.1.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or(String::new());
-            Ok(serde_json::json!({
-                "output": output_string,
-                "is_running": entry.is_running.load(atomic::Ordering::SeqCst),
-            }))
-        } else {
-            Err(nekocode_types::tool::ToolError::InvalidParameters(format!(
-                "No active shell with pid {}",
-                pid
-            )))
-        }
-    }
-}
-
+/// Send input (a line) to the stdin of a previously spawned shell.
 pub struct SendShellInputTool {
     pub shell_states: Arc<dashmap::DashMap<u32, ShellTaskState>>,
 }
@@ -344,16 +358,16 @@ impl Tool for SendShellInputTool {
             parameter_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "pid": {
+                    "shell_id": {
                         "type": "integer",
-                        "description": "The process ID of the shell to send input to."
+                        "description": "The shell id returned by spawn_shell."
                     },
                     "input": {
                         "type": "string",
-                        "description": "The input to send to the shell. Ends with a newline if you want to flush the stdin."
+                        "description": "The input to send to the shell. A newline is appended automatically unless the input already ends with one."
                     }
                 },
-                "required": ["pid", "input"]
+                "required": ["shell_id", "input"]
             }),
         }
     }
@@ -361,42 +375,120 @@ impl Tool for SendShellInputTool {
     async fn call(
         &self,
         params: serde_json::Value,
-    ) -> Result<serde_json::Value, nekocode_types::tool::ToolError> {
-        let pid = params.get("pid").and_then(|v| v.as_u64()).ok_or_else(|| {
-            nekocode_types::tool::ToolError::InvalidParameters(
-                "Missing or invalid 'pid' parameter".into(),
-            )
-        })? as u32;
+    ) -> Result<serde_json::Value, ToolError> {
+        let shell_id = parse_shell_id(&params)?;
         let input = params
             .get("input")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                nekocode_types::tool::ToolError::InvalidParameters(
-                    "Missing 'input' parameter".into(),
-                )
-            })?;
+            .ok_or_else(|| ToolError::InvalidParameters("Missing 'input' parameter".into()))?;
 
-        if let Some(entry) = self.shell_states.get(&pid) {
-            if entry.is_running.load(atomic::Ordering::SeqCst) {
+        match self.shell_states.get(&shell_id) {
+            Some(entry) => {
+                if !entry.is_running.load(atomic::Ordering::SeqCst) {
+                    return Err(ToolError::ExecutionError(
+                        "Shell process is not running".into(),
+                    ));
+                }
                 if let Err(e) = entry.input.send(input.to_string()) {
                     debug!("Error sending input to shell: {}", e);
-                    return Err(nekocode_types::tool::ToolError::ExecutionError(
+                    return Err(ToolError::ExecutionError(
                         "Failed to send input to shell".into(),
                     ));
                 }
-                Ok(serde_json::json!({
-                    "status": "input sent"
-                }))
-            } else {
-                Err(nekocode_types::tool::ToolError::ExecutionError(
-                    "Shell process is not running".into(),
-                ))
+                Ok(serde_json::json!({ "status": "input sent", "shell_id": shell_id }))
             }
-        } else {
-            Err(nekocode_types::tool::ToolError::InvalidParameters(format!(
-                "No active shell with pid {}",
-                pid
-            )))
+            None => Err(ToolError::InvalidParameters(format!(
+                "No active shell with shell_id {}",
+                shell_id
+            ))),
         }
     }
+}
+
+/// Fetch output produced since the previous fetch for a shell. Returns the new
+/// lines joined by `\n`, plus the running flag. Reads are incremental and
+/// lossless: the cursor is advanced after each fetch.
+pub struct FetchShellOutputTool {
+    pub shell_states: Arc<dashmap::DashMap<u32, ShellTaskState>>,
+}
+
+#[async_trait::async_trait]
+impl Tool for FetchShellOutputTool {
+    fn spec(&self) -> nekocode_types::tool::ToolSpec {
+        nekocode_types::tool::ToolSpec {
+            name: "fetch_shell_output".to_string(),
+            description:
+                "A tool for fetching the output produced by a long-running shell since the last fetch."
+                    .to_string(),
+            parameter_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "shell_id": {
+                        "type": "integer",
+                        "description": "The shell id returned by spawn_shell."
+                    }
+                },
+                "required": ["shell_id"]
+            }),
+        }
+    }
+
+    async fn call(
+        &self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolError> {
+        let shell_id = parse_shell_id(&params)?;
+        let entry = self
+            .shell_states
+            .get(&shell_id)
+            .ok_or_else(|| {
+                ToolError::InvalidParameters(format!(
+                    "No active shell with shell_id {}",
+                    shell_id
+                ))
+            })?
+            .clone();
+
+        let new_output = drain_output(&entry);
+        Ok(serde_json::json!({
+            "shell_id": shell_id,
+            "output": new_output,
+            "is_running": entry.is_running.load(atomic::Ordering::SeqCst),
+        }))
+    }
+}
+
+/// Read all lines at index >= cursor from the buffer, then advance the cursor
+/// to the new length. Returns the joined new lines.
+fn drain_output(state: &ShellTaskState) -> String {
+    let guard = Guard::new();
+    let Some(buf) = state.output.load(atomic::Ordering::Acquire, &guard).as_ref() else {
+        // Buffer swapped out concurrently; nothing to read this round.
+        return String::new();
+    };
+    let start = state
+        .output_cursor
+        .load(atomic::Ordering::Acquire);
+    let total = buf.count();
+    if start >= total {
+        return String::new();
+    }
+    let mut collected: Vec<String> = Vec::with_capacity(total - start);
+    for i in start..total {
+        if let Some(line) = buf.get(i) {
+            collected.push(line.clone());
+        }
+    }
+    state
+        .output_cursor
+        .store(total, atomic::Ordering::Release);
+    collected.join("\n")
+}
+
+fn parse_shell_id(params: &serde_json::Value) -> Result<u32, ToolError> {
+    params
+        .get("shell_id")
+        .and_then(|v| v.as_u64())
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or_else(|| ToolError::InvalidParameters("Missing or invalid 'shell_id' parameter".into()))
 }

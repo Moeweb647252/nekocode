@@ -49,7 +49,8 @@ pub async fn activate_thread(
     for i in thread.middlewares.get() {
         match i.name.as_str() {
             "shell" => {
-                middlewares.push(Box::new(nekocode_shell::Shell::new(extensions.clone())));
+                let cfg = nekocode_shell::config::ShellConfig::from_value(&i.config);
+                middlewares.push(Box::new(nekocode_shell::Shell::new(extensions.clone(), cfg)));
             }
             _ => {
                 tracing::warn!("Unknown middleware: {}", i.name);

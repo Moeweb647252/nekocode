@@ -36,8 +36,10 @@ pub async fn list_shells(
         .map(|state| {
             json!(
                 {
+                    "shellId": state.shell_id,
+                    "pid": state.pid,
                     "command": state.command,
-                    "is_running": state.is_running.load(atomic::Ordering::SeqCst),
+                    "isRunning": state.is_running.load(atomic::Ordering::SeqCst),
                 }
             )
         })
