@@ -139,6 +139,7 @@ impl Tool for SpawnShellTool {
         self.shell_states.insert(
             pid,
             ShellTaskState {
+                command: command.to_string(),
                 output: output.clone(),
                 input: input_tx,
                 cancellation_token: cancellation_token.clone(),

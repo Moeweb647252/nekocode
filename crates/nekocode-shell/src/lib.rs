@@ -10,7 +10,9 @@ use tokio::sync::mpsc;
 pub mod config;
 pub mod tool;
 
+#[derive(Clone)]
 pub struct ShellTaskState {
+    pub command: String,
     pub output: Arc<AtomicOwned<boxcar::Vec<String>>>,
     pub input: mpsc::UnboundedSender<String>,
     pub cancellation_token: tokio_util::sync::CancellationToken,
