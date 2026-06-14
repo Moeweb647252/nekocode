@@ -11,7 +11,7 @@ pub struct ListShells {
 }
 
 pub async fn list_shells(
-    State(mut state): State<AppState>,
+    State(state): State<AppState>,
     Json(ListShells { thread_id }): Json<ListShells>,
 ) -> ApiResult {
     let thread_state = {
@@ -26,7 +26,9 @@ pub async fn list_shells(
         .await
         .extensions
         .get("shell")
-        .ok_or_else(|| ApiError::ThreadNotActivated)?
+        .ok_or_else(|| {
+            ApiError::ItemNotFound(String::from("shell middleware not configured for thread"))
+        })?
         .downcast_ref::<Arc<dashmap::DashMap<u32, ShellTaskState>>>()
         .ok_or_else(|| ApiError::ItemNotFound(String::from("shell middleware ext")))?
         .clone();

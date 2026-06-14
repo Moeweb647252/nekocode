@@ -2,36 +2,55 @@
 import { listDir, type ListDirEntry } from "@/api";
 import type { DynamicDialogInstance } from "primevue/dynamicdialogoptions";
 
-const currentPath = ref();
-
 const dialogRef = inject<Ref<DynamicDialogInstance>>("dialogRef");
+const currentPath = ref("");
 const selected = ref();
 const entries: Ref<ListDirEntry[]> = ref([]);
 const isOkDisabled = computed(() => {
   return !selected.value || !selected.value.isDir;
 });
 
+// Join path segments, collapsing duplicate slashes so navigating from "/"
+// doesn't produce "//segment".
+function joinPath(base: string, name: string): string {
+  if (base.endsWith("/")) return base + name;
+  return base + "/" + name;
+}
+
+async function load(path: string) {
+  try {
+    entries.value = await listDir(path);
+  } catch (e) {
+    console.error("Failed to list directory:", e);
+    entries.value = [];
+  }
+}
+
 onMounted(async () => {
-  currentPath.value = dialogRef?.value.data.path;
-  entries.value = await listDir(currentPath.value + "/");
+  const data = dialogRef?.value?.data;
+  currentPath.value = (data && (data as { path?: string }).path) || "/";
+  await load(currentPath.value);
 });
 
 const enterDir = async (entry: ListDirEntry) => {
   if (!entry.isDir) return;
-  currentPath.value = `${currentPath.value}/${entry.name}`;
-  entries.value = await listDir(currentPath.value + "/");
+  currentPath.value = joinPath(currentPath.value, entry.name);
+  await load(currentPath.value);
 };
 
 const closeDialog = () => {
-  dialogRef?.value.close(`${currentPath.value}/${selected.value.name}`);
+  const path = selected.value
+    ? joinPath(currentPath.value, selected.value.name)
+    : currentPath.value;
+  dialogRef?.value?.close(path);
 };
 
 const goUp = async () => {
   if (currentPath.value === "/") return;
-  const parts = currentPath.value.split("/");
+  const parts = currentPath.value.split("/").filter(Boolean);
   parts.pop();
-  currentPath.value = parts.join("/") || "/";
-  entries.value = await listDir(currentPath.value + "/");
+  currentPath.value = "/" + parts.join("/");
+  await load(currentPath.value);
 };
 </script>
 <template>

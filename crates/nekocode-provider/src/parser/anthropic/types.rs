@@ -154,8 +154,25 @@ pub enum RawMessageStreamEvent {
 pub struct RawMessageStartEvent {
     pub message: Message,
 }
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RawMessageDeltaEvent {
+    #[serde(default)]
+    pub delta: RawMessageDelta,
+    #[serde(default)]
+    pub usage: Option<DeltaUsage>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RawMessageDelta {
+    #[serde(default)]
+    pub stop_reason: Option<StopReason>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RawMessageDeltaEvent {}
+pub struct DeltaUsage {
+    #[serde(default)]
+    pub output_tokens: usize,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawContentBlockStartEvent {
     pub index: usize,
@@ -213,21 +230,29 @@ pub enum StopReason {
     #[serde(rename = "refusal")]
     Refusal,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CacheCreation {
+    #[serde(default)]
     pub ephemeral_1h_input_tokens: usize,
+    #[serde(default)]
     pub ephemeral_5m_input_tokens: usize,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputTokensDetails {
+    #[serde(default)]
     pub thinking_tokens: usize,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Usage {
+    #[serde(default)]
     pub cache_creation: CacheCreation,
+    #[serde(default)]
     pub cache_creation_input_tokens: usize,
+    #[serde(default)]
     pub cache_read_input_tokens: usize,
+    #[serde(default)]
     pub input_tokens: usize,
+    #[serde(default)]
     pub output_tokens: usize,
 }
 

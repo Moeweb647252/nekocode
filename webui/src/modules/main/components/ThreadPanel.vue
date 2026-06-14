@@ -14,34 +14,60 @@ const messages = computed(() => {
   return [...dbMessages, ...streamingMessages.value];
 });
 const userInput = ref("");
+const sending = ref(false);
+
+// Track whether this component instance is still mounted so async callbacks
+// from getThread/activateThread don't write into stale state after the user
+// switches threads (the parent remounts via :key).
+let alive = true;
+// Cleanup function for the in-flight WebSocket; invoked on unmount so the
+// socket (and its onDelta closures) don't outlive this component.
+let closeStream: (() => void) | null = null;
 
 onMounted(async () => {
-  thread.value = await getThread(selectedThread?.value.id!, 10);
-  if (!thread.value.active) {
-    await activateThread(thread.value.id);
+  const id = selectedThread?.value?.id;
+  if (id == null) return;
+  try {
+    const got = await getThread(id, 10);
+    if (!alive) return; // user switched threads while loading
+    thread.value = got;
+    if (!got.active) await activateThread(got.id);
+  } catch (e) {
+    console.error("Failed to load thread:", e);
   }
 });
 
+onBeforeUnmount(() => {
+  alive = false;
+  closeStream?.();
+  closeStream = null;
+});
+
 const sendMessage = async () => {
+  const id = thread.value?.id;
+  if (id == null) return;
   const input = userInput.value.trim();
-  if (!input) return;
+  if (!input || sending.value) return;
+  sending.value = true;
   userInput.value = "";
 
-  // 立即追加用户消息
-  streamingMessages.value = [{ type: "user", data: { type: "text", content: input } }];
+  // Append the user message (don't wipe prior streaming state).
+  streamingMessages.value.push({ type: "user", data: { type: "text", content: input } });
 
-  // 当前正在构建的 assistant 消息（直接引用 streamingMessages 中的最后一条）
+  // The assistant message currently being built (a direct reference into the
+  // streaming array so deltas mutate the same reactive object).
   let currentAssistantMsg: ChatMessage | null = null;
 
-  streamGenerate(thread.value!.id, input, {
+  closeStream?.();
+  closeStream = streamGenerate(id, input, {
     onDelta: (event: AgentEvent) => {
+      if (!alive) return;
       const se = event.data;
       if (se.type !== "streamEvent") return;
       const d = se.data;
 
       switch (d.type) {
         case "messageStart": {
-          // 创建新的 assistant 消息并推入列表
           const newMsg: ChatMessage = {
             type: "assistant",
             data: { blocks: reactive([]) },
@@ -54,7 +80,6 @@ const sendMessage = async () => {
           if (!currentAssistantMsg) return;
           if (currentAssistantMsg.type !== "assistant") return;
           const blocks = currentAssistantMsg.data.blocks;
-          // 确保最后一个 block 是文本块（可追加）
           let lastBlock = blocks[blocks.length - 1];
           if (!lastBlock || lastBlock.type !== "text") {
             lastBlock = { type: "text", content: "", reasoningContent: null };
@@ -92,16 +117,16 @@ const sendMessage = async () => {
           break;
         }
         case "messageEnd": {
-          // 当前消息已完整，清空引用即可
           currentAssistantMsg = null;
           break;
         }
       }
     },
     onStop: () => {
-      console.log("completed");
+      sending.value = false;
     },
     onError: (err) => {
+      sending.value = false;
       console.error(err);
     },
   });
@@ -113,7 +138,7 @@ const sendMessage = async () => {
       <MessageBox :messages="messages"></MessageBox>
     </SplitterPanel>
     <SplitterPanel>
-      <InputArea v-model:value="userInput" @sendClicked="sendMessage"></InputArea>
+      <InputArea v-model:value="userInput" :disabled="sending" @sendClicked="sendMessage"></InputArea>
     </SplitterPanel>
   </Splitter>
 </template>

@@ -419,30 +419,16 @@ fn to_anthropic_message(msg: &Message) -> MessageParam {
             )]),
         },
         Message::Assistant(assistant) => {
-            let has_tool_calls = assistant
-                .blocks
-                .iter()
-                .any(|b| matches!(b, AssistantContentBlock::ToolCall(_)));
             let mut blocks: Vec<ContentBlockParam> = Vec::new();
             for block in &assistant.blocks {
                 match block {
                     AssistantContentBlock::Text {
                         content: text,
-                        reasoning_content,
+                        reasoning_content: _,
                     } => {
                         blocks.push(ContentBlockParam::TextBlockParam(TextBlockParam {
                             text: text.clone(),
                         }));
-                        // Thinking must only be passed back when the model
-                        // performed a tool call; otherwise the API ignores it.
-                        if has_tool_calls {
-                            if let Some(r) = reasoning_content {
-                                blocks.push(ContentBlockParam::ThinkingBlockParam {
-                                    signature: String::new(),
-                                    thinking: r.clone(),
-                                });
-                            }
-                        }
                     }
                     AssistantContentBlock::ToolCall(tc) => {
                         blocks.push(ContentBlockParam::ToolUseBlockParam(

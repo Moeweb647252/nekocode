@@ -102,10 +102,21 @@ impl Tool for OnceShellTool {
             match tokio::time::timeout(Duration::from_secs(secs), collect).await {
                 Ok(res) => res.map_err(|e| ToolError::ExecutionError(e.to_string()))?,
                 Err(_) => {
-                    // Timed out. `collect` is dropped here, releasing `&mut child`,
-                    // so we can signal the child before bailing. Reaping is left
-                    // to the OS.
+                    // Timed out. Kill the process and reap it so it doesn't
+                    // become a zombie; SIGTERM may be ignored by a trapped
+                    // child, so escalate to SIGKILL if it hasn't exited.
                     let _ = child.start_kill();
+                    let killed = tokio::time::timeout(
+                        Duration::from_secs(2),
+                        child.wait(),
+                    )
+                    .await
+                    .is_ok();
+                    if !killed {
+                        // Forcefully kill and reap to avoid leaking a zombie.
+                        let _ = child.kill().await;
+                        let _ = child.wait().await;
+                    }
                     return Err(ToolError::ExecutionError(format!(
                         "command timed out after {secs}s"
                     )));

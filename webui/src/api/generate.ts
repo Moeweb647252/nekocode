@@ -60,6 +60,11 @@ function connectStream(
   const token = authToken()
   const protocols = token ? [token] : undefined
   const ws = new WebSocket(url, protocols)
+  // Track lifecycle so each terminal transition (error or clean stop) fires
+  // the appropriate callback exactly once. Without this, a `stop` followed by
+  // `ws.close()` would re-enter `onError`/`onStop`, and a transport `error`
+  // preceding `close` would double-fire `onError`.
+  let stopped = false
 
   ws.addEventListener('open', () => {
     onOpen?.(ws)
@@ -71,6 +76,7 @@ function connectStream(
       if ('delta' in msg) {
         callbacks.onDelta(msg.delta)
       } else if ('stop' in msg) {
+        stopped = true
         callbacks.onStop(msg.stop)
         ws.close()
       }
@@ -80,16 +86,23 @@ function connectStream(
   })
 
   ws.addEventListener('error', () => {
+    if (stopped) return
+    stopped = true
     callbacks.onError(new Error('WebSocket connection error'))
   })
 
   ws.addEventListener('close', (event) => {
+    if (stopped) return
+    // Only treat an *unclean* close as an error. A clean close with no prior
+    // `stop` frame is still unexpected, so surface it.
     if (!event.wasClean) {
+      stopped = true
       callbacks.onError(new Error(`WebSocket closed unexpectedly (code ${event.code})`))
     }
   })
 
   return () => {
+    stopped = true
     if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
       ws.close(1000, 'client disconnect')
     }

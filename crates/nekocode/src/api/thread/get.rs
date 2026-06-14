@@ -35,7 +35,9 @@ pub async fn get_thread(
                 .exec(&mut state.db)
                 .await?
         } else {
-            toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .id ASC LIMIT 1)
+            // No limit requested: return only the latest turn (DESC + LIMIT 1).
+            // Previously this was `ASC LIMIT 1`, which returned the *oldest* turn.
+            toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .id DESC LIMIT 1)
                 .include(Turn::fields().messages())
                 .exec(&mut state.db)
                 .await?

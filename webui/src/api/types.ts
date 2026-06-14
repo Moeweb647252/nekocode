@@ -109,25 +109,6 @@ export type RawStreamEventData =
   | { type: 'toolCall'; data: ToolCall }
   | { type: 'toolCallResult'; data: ToolCallResult }
 
-export type StreamEventData =
-  | ({ type: 'messageStart' } & MessageMetadata)
-  | { type: 'messageEnd' }
-  | { type: 'content'; text: string }
-  | { type: 'reasoningContent'; text: string }
-  | ({ type: 'toolCall' } & ToolCall)
-  | ({ type: 'toolCallResult' } & ToolCallResult)
-
-export function normalizeStreamEvent(raw: RawStreamEventData): StreamEventData {
-  switch (raw.type) {
-    case 'messageStart': return { type: 'messageStart', ...raw.data }
-    case 'messageEnd':   return { type: 'messageEnd' }
-    case 'content':      return { type: 'content', text: raw.data }
-    case 'reasoningContent': return { type: 'reasoningContent', text: raw.data }
-    case 'toolCall':     return { type: 'toolCall', ...raw.data }
-    case 'toolCallResult': return { type: 'toolCallResult', ...raw.data }
-  }
-}
-
 export interface MessageMetadata {
   role: 'user' | 'assistant' | 'middleware'
 }

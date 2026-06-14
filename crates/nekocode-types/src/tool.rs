@@ -60,15 +60,14 @@ pub trait Tool {
     async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError>;
 }
 
+#[derive(Default)]
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool + Send + Sync>>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
-        Self {
-            tools: HashMap::new(),
-        }
+        Self::default()
     }
 
     pub fn insert(&mut self, name: String, tool: Arc<dyn Tool + Send + Sync>) {

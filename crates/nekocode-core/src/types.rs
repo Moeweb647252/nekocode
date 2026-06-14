@@ -15,16 +15,14 @@ impl GenerateRequest {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GenerateResponse {
     pub message: Vec<Message>,
 }
 
 impl GenerateResponse {
     pub fn new() -> Self {
-        Self {
-            message: Vec::new(),
-        }
+        Self::default()
     }
 
     /// Merge a completed provider response by converting its assistant

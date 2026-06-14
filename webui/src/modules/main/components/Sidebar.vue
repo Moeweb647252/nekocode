@@ -2,7 +2,7 @@
 import { createThread, getDirs, listThreads } from "@/api";
 import type { Thread } from "@/api/types";
 import { useDialog } from "primevue";
-import PickFloder from "./PickFolder.vue";
+import PickFolder from "./PickFolder.vue";
 
 const dialog = useDialog();
 
@@ -11,42 +11,52 @@ const homeDir = ref();
 const selectedThread = inject<Ref<Thread>>("selectedThread");
 
 onMounted(async () => {
-  threads.value = await listThreads();
+  try {
+    threads.value = await listThreads();
+  } catch (e) {
+    console.error("Failed to list threads:", e);
+  }
 });
 
 const newThread = async () => {
-  if (!homeDir.value) {
-    homeDir.value = (await getDirs()).homeDir;
+  try {
+    if (!homeDir.value) {
+      homeDir.value = (await getDirs()).homeDir;
+    }
+    dialog.open(PickFolder, {
+      props: {
+        header: "Select a working directory",
+      },
+      data: {
+        path: homeDir.value,
+      },
+      onClose: async (data: unknown) => {
+        if (!data) return;
+        // The dialog returns the chosen path as a plain string.
+        const path = typeof data === "string" ? data : (data as { data?: string }).data;
+        if (!path) return;
+        try {
+          await createThread(path);
+          threads.value = await listThreads();
+        } catch (e) {
+          console.error("Failed to create thread:", e);
+        }
+      },
+    });
+  } catch (e) {
+    console.error("Failed to open new-thread dialog:", e);
   }
-  dialog.open(PickFloder, {
-    props: {
-      header: "Select a working directory",
-    },
-    data: {
-      path: homeDir.value,
-    },
-    onClose: async (data) => {
-      if (!data) return;
-      await createThread(data.data);
-      threads.value = await listThreads();
-    },
-  });
 };
 </script>
 <template>
   <div class="h-full sidebar">
     <div class="grid grid-rows-[auto_1fr] h-full overflow-hidden">
       <div class="">
-        <li>
-          <ul>
-            <Button label="New Thread" variant="text" size="small" @click="newThread()" />
-          </ul>
-        </li>
+        <Button label="New Thread" variant="text" size="small" @click="newThread()" />
       </div>
       <div class="overflow-hidden">
         <Listbox
           :options="threads"
-          option-label="name"
           v-model="selectedThread"
           class="overflow-hidden border-none!"
           style="background: none"

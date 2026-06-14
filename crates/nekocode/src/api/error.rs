@@ -1,3 +1,4 @@
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use tracing::error;
 
@@ -9,7 +10,7 @@ pub enum ApiError {
     SerializationError(serde_json::Error),
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
-    #[error("thread alreay activated")]
+    #[error("Thread already activated")]
     ThreadAlreadyActivated,
     #[error("Thread not activated")]
     ThreadNotActivated,
@@ -44,16 +45,37 @@ impl ApiError {
             ApiError::Other(_) => "other",
         }
     }
+
+    /// Map each error to the most appropriate HTTP status code. Without this,
+    /// every error response was returned as `200 OK`, defeating HTTP semantics
+    /// for REST clients.
+    pub fn status_code(&self) -> StatusCode {
+        match self {
+            ApiError::Unauthorized => StatusCode::UNAUTHORIZED,
+            ApiError::ThreadNotActivated => StatusCode::CONFLICT,
+            ApiError::ThreadAlreadyActivated | ApiError::ThreadGenerating => {
+                StatusCode::CONFLICT
+            }
+            ApiError::ItemNotFound(_) => StatusCode::NOT_FOUND,
+            ApiError::InvalidInput(_) => StatusCode::BAD_REQUEST,
+            ApiError::SerializationError(_) => StatusCode::BAD_REQUEST,
+            ApiError::DatabaseError(_)
+            | ApiError::IoError(_)
+            | ApiError::Internal(_)
+            | ApiError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         error!("Failed while handling api request: {}", self);
+        let status = self.status_code();
         let body = serde_json::json!({
             "code": self.code(),
             "data": null,
             "msg": self.to_string(),
         });
-        axum::response::Json(body).into_response()
+        (status, axum::response::Json(body)).into_response()
     }
 }

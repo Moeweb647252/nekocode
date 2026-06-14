@@ -9,7 +9,6 @@ use crate::AppState;
 pub type ThreadId = u64;
 
 pub struct GenerateState {
-    pub thread_id: ThreadId,
     pub deltas: boxcar::Vec<AgentEvent>,
     pub broadcast: tokio::sync::broadcast::Receiver<AgentEvent>,
     pub cancellation_token: tokio_util::sync::CancellationToken,

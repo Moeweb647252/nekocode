@@ -22,6 +22,7 @@ pub fn router() -> Router<AppState> {
         .nest("/thread", thread::router())
         .nest("/auth", auth::router())
         .nest("/generate", generate::router())
+        .nest("/middleware", middleware::router())
         .nest("/util", util::router())
 }
 

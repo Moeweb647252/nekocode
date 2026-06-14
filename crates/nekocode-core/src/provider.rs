@@ -11,7 +11,7 @@ pub enum ProviderError {
     #[error("HTTP error: {0}")]
     HttpError(#[from] reqwest::Error),
     #[error("Error while deserializing data: {0}")]
-    DeserializationError(serde_json::Error),
+    DeserializationError(#[from] serde_json::Error),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -25,19 +25,6 @@ pub trait Provider: Send + Sync {
     ) -> Result<ProviderResponse, ProviderError>;
 
     async fn generate(&self, request: GenerateRequest) -> Result<ProviderResponse, ProviderError>;
-}
-
-#[derive(Debug, Clone)]
-pub enum Role {
-    User,
-    Assistant,
-    Tool,
-    Custom(String),
-}
-
-#[derive(Debug, Clone)]
-pub enum MessageContent {
-    Text(String),
 }
 
 pub struct ProviderResponse {
@@ -61,9 +48,9 @@ pub enum ProviderEvent {
     ToolCall(ToolCall),
 }
 
-impl Into<generate::StreamEvent> for &ProviderEvent {
-    fn into(self) -> generate::StreamEvent {
-        let data = match self {
+impl From<&ProviderEvent> for generate::StreamEvent {
+    fn from(event: &ProviderEvent) -> generate::StreamEvent {
+        let data = match event {
             ProviderEvent::MessageStart => {
                 generate::StreamEventData::MessageStart(generate::MessageMetadata {
                     role: generate::Role::Assistant,

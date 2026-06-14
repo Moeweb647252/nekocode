@@ -172,10 +172,13 @@ impl EventSource for Response {
                     break;
                 }
 
-                // Strip the line terminator (\r\n, \n, or \r) according to the SSE spec.
+                // Strip the line terminator (\r\n, \n, or \r) according to
+                // the SSE spec. `read_line` only strips `\n`, so a trailing
+                // `\r` (from CRLF streams) must be removed explicitly.
                 let line = line_buffer
                     .strip_suffix("\r\n")
                     .or_else(|| line_buffer.strip_suffix('\n'))
+                    .or_else(|| line_buffer.strip_suffix('\r'))
                     .unwrap_or(&line_buffer);
 
                 // dispatch

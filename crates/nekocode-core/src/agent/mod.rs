@@ -6,6 +6,7 @@ use nekocode_entities::{thread::Thread, turn::Turn};
 use nekocode_types::{
     generate::{
         AssistantContentBlock, MessageContent, MessageMetadata, Role, StreamEvent, StreamEventData,
+        Usage,
     },
     tool::{ToolCallResult, ToolCallResultInner, ToolRegistry},
 };
@@ -36,7 +37,10 @@ pub enum AgentEventType {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RunLoopSummary {}
+pub struct RunLoopSummary {
+    /// Aggregate token usage across every provider generation in this run.
+    pub usage: Usage,
+}
 
 #[derive(Clone)]
 pub struct Agent {
@@ -99,10 +103,14 @@ impl Agent {
         }
         let mut messages = old_messages.clone();
         messages.push(user_message);
+        // Capture the system prompt up front so it survives both the inner
+        // (tool-call) and outer (middleware) regeneration loops.
         let mut request = GenerateRequest {
             messages: messages.into_iter().map(|m| m.content.0).collect(),
             ..Default::default()
         };
+        // Accumulated usage across all provider calls in this run.
+        let mut total_usage = Usage::default();
         loop {
             let mut tool_registry = ToolRegistry::new();
             for middleware in self.middlewares.iter() {
@@ -111,12 +119,13 @@ impl Agent {
                     .await?;
             }
             request.tool_specs = tool_registry.specs();
+            let system_prompt = request.system_prompt.clone();
+            let tool_specs = request.tool_specs.clone();
             let mut generate_response = GenerateResponse::new();
             loop {
                 let mut need_break = false;
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                 let provider = self.provider.clone();
-                let system_prompt = request.system_prompt.clone();
                 sender
                     .send(AgentEvent {
                         index,
@@ -132,6 +141,12 @@ impl Agent {
                 let handle =
                     tokio::spawn(async move { provider.stream_generate(request, tx).await });
                 while let Some(event) = (&mut rx).recv().await {
+                    // The agent emits its own MessageStart above before the
+                    // provider call; skip the provider's duplicate so the
+                    // client doesn't see two MessageStart events per turn.
+                    if matches!(event, ProviderEvent::MessageStart) {
+                        continue;
+                    }
                     let agent_event = AgentEvent {
                         index,
                         data: AgentEventType::StreamEvent((&event).into()),
@@ -149,10 +164,24 @@ impl Agent {
                 let response = handle
                     .await
                     .map_err(|e| -> AgentError { anyhow!("error joining task {e}").into() })??;
+                // Accumulate usage from this provider call.
+                total_usage.total_input += response.usage.total_input;
+                total_usage.total_output += response.usage.total_output;
+                total_usage.cache_miss += response.usage.cache_miss;
+                if response.usage.cache_hit {
+                    total_usage.cache_hit = true;
+                }
+                let assistant_usage = Json(Usage {
+                    total_input: response.usage.total_input,
+                    total_output: response.usage.total_output,
+                    cache_hit: response.usage.cache_hit,
+                    cache_miss: response.usage.cache_miss,
+                });
                 create!(nekocode_entities::message::Message {
                     turn_id: this_turn.id,
                     message_index: message_index,
                     content: nekocode_types::generate::Message::Assistant(response.message.clone()),
+                    usage: Some(assistant_usage),
                 })
                 .exec(&mut db)
                 .await?;
@@ -216,8 +245,8 @@ impl Agent {
                 messages.extend(this_turn.messages.get().to_owned());
                 request = GenerateRequest {
                     messages: messages.into_iter().map(|m| m.content.0).collect(),
-                    system_prompt: system_prompt,
-                    tool_specs: tool_registry.specs(),
+                    system_prompt: system_prompt.clone(),
+                    tool_specs: tool_specs.clone(),
                 };
             }
 
@@ -239,17 +268,23 @@ impl Agent {
                     .await?;
                     let mut messages = old_messages.clone();
                     messages.extend(this_turn.messages.get().to_owned());
+                    // Preserve the system prompt and tool specs across the
+                    // outer middleware-driven regeneration loop.
                     request = GenerateRequest {
                         messages: messages.into_iter().map(|m| m.content.0).collect(),
-                        ..Default::default()
+                        system_prompt,
+                        tool_specs,
                     };
                 }
             }
         }
         let mut update = query!(Turn FILTER .id == #(this_turn.id)).update();
         update.set_finished(true);
+        update.set_usage(Json(total_usage.clone()));
         update.exec(&mut db).await?;
 
-        Ok(RunLoopSummary {})
+        Ok(RunLoopSummary {
+            usage: total_usage,
+        })
     }
 }

@@ -16,9 +16,6 @@ pub async fn activate_thread(
     Json(payload): Json<ActivateThread>,
 ) -> ApiResult {
     let thread_id = payload.id;
-    if state.active_threads.contains_key(&thread_id) {
-        return Err(ApiError::ThreadAlreadyActivated);
-    }
 
     let thread = toasty::query!(Thread FILTER .id == #thread_id)
         .include(Thread::fields().middlewares())
@@ -58,11 +55,12 @@ pub async fn activate_thread(
         }
     }
 
+    // Single atomic check-and-insert via the dashmap entry API. The redundant
+    // pre-check that used to live here raced with concurrent activations and
+    // surfaced a misleading generic error; the entry match below is the source
+    // of truth.
     match state.active_threads.entry(thread_id) {
-        Occupied(_) => {
-            // This should never happen due to the check above, but we handle it just in case.
-            return Err(ApiError::ThreadAlreadyActivated);
-        }
+        Occupied(_) => Err(ApiError::ThreadAlreadyActivated),
         Vacant(entry) => {
             entry.insert(Arc::new(RwLock::new(Agent {
                 thread_id,
@@ -71,8 +69,7 @@ pub async fn activate_thread(
                 provider: Arc::from(provider),
                 extensions,
             })));
+            ApiResponse::ok(())
         }
     }
-
-    ApiResponse::ok(())
 }

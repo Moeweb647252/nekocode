@@ -10,7 +10,7 @@ provide("selectedThread", selectedThread);
       <Sidebar />
     </SplitterPanel>
     <SplitterPanel :size="80">
-      <div class="h-full flex items-center justify-center" v-if="!selectedThread">
+      <div class="h-full flex items-center justify-center" v-if="!selectedThread?.id">
         <h1 class="text-3xl text-gray-500">Select or create a thread to get started</h1>
       </div>
       <div class="h-full" v-else>

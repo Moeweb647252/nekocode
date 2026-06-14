@@ -21,20 +21,23 @@ pub async fn watch_stream(
             Ok(_) => (),
             Err(e) => {
                 error!("error handling watch stream: {e}");
-                ws.send(ws::Message::Text(
-                    serde_json::to_string(&WebSocketEvent::Stop(StopReason {
-                        reason: Reason::Error,
-                        detail: e.to_string().into(),
-                    }))
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-                ))
-                .await
-                .ok();
+                send_stop(&mut ws, Reason::Error, e.to_string().into()).await;
             }
         }
     })
+}
+
+/// Send a terminal `Stop` frame, tolerating serialization / socket errors so
+/// the upgrade future itself never panics.
+async fn send_stop(ws: &mut WebSocket, reason: Reason, detail: serde_json::Value) {
+    let Ok(payload) = serde_json::to_string(&WebSocketEvent::Stop(StopReason { reason, detail }))
+    else {
+        return;
+    };
+    let Ok(payload) = payload.try_into() else {
+        return;
+    };
+    let _ = ws.send(ws::Message::Text(payload)).await;
 }
 
 pub async fn handle_websocket(
@@ -52,15 +55,28 @@ pub async fn handle_websocket(
     // Subscribe first so no events are missed between replay and live listening.
     let mut rx = generate_state.broadcast.resubscribe();
 
-    // Replay historical deltas so late joiners catch up.
-    // Track the index one past the last replayed event for dedup.
-    let mut watermark = 0;
-    for (_, delta) in generate_state.deltas.iter() {
-        watermark = delta.index.max(watermark);
-        ws.send(ws::Message::Text(
-            serde_json::to_string(&WebSocketEvent::Delta(delta.clone()))?.try_into()?,
-        ))
-        .await?;
+    // Replay historical deltas so late joiners catch up. We track a contiguous
+    // watermark: the index one past the last replayed event. Using a strict
+    // `max`-based watermark would be unsafe if `boxcar::Vec::iter()` ever
+    // observed indices out of order, so we only advance when we see the exact
+    // next index we expect.
+    let mut watermark = 0usize;
+    for (i, delta) in generate_state.deltas.iter() {
+        if i == watermark {
+            watermark = i + 1;
+            ws.send(ws::Message::Text(
+                serde_json::to_string(&WebSocketEvent::Delta(delta.clone()))?.try_into()?,
+            ))
+            .await?;
+        } else if i > watermark {
+            // Iteration skipped ahead (shouldn't happen with boxcar's monotonic
+            // push indices, but guard regardless); advance to cover the gap.
+            watermark = i + 1;
+            ws.send(ws::Message::Text(
+                serde_json::to_string(&WebSocketEvent::Delta(delta.clone()))?.try_into()?,
+            ))
+            .await?;
+        }
     }
 
     let cancellation = generate_state.cancellation_token.clone();
@@ -71,39 +87,41 @@ pub async fn handle_websocket(
                 match result {
                     Ok(event) => {
                         // Skip events we already replayed.
-                        if event.index <= watermark {
+                        if event.index < watermark {
                             continue;
                         }
+                        // Keep the watermark moving forward so future replays
+                        // (after a lag) stay in sync with what we've sent.
+                        watermark = watermark.max(event.index + 1);
                         ws.send(ws::Message::Text(
                             serde_json::to_string(&WebSocketEvent::Delta(event))?.try_into()?,
                         ))
                         .await?;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        ws.send(ws::Message::Text(
-                            serde_json::to_string(&WebSocketEvent::Stop(StopReason {
-                                reason: Reason::Finished,
-                                detail: serde_json::Value::Null,
-                            }))?
-                            .try_into()?,
-                        ))
-                        .await?;
+                        send_stop(ws, Reason::Finished, serde_json::Value::Null).await;
                         return Ok(());
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        continue;
+                        // The live receiver skipped events. Recover them from
+                        // the durable boxcar buffer by replaying everything at
+                        // or beyond the watermark, so a slow watcher doesn't
+                        // silently lose content.
+                        for (i, delta) in generate_state.deltas.iter() {
+                            if i < watermark {
+                                continue;
+                            }
+                            watermark = i + 1;
+                            ws.send(ws::Message::Text(
+                                serde_json::to_string(&WebSocketEvent::Delta(delta.clone()))?.try_into()?,
+                            ))
+                            .await?;
+                        }
                     }
                 }
             }
             _ = cancellation.cancelled() => {
-                ws.send(ws::Message::Text(
-                    serde_json::to_string(&WebSocketEvent::Stop(StopReason {
-                        reason: Reason::Interrupted,
-                        detail: serde_json::Value::Null,
-                    }))?
-                    .try_into()?,
-                ))
-                .await?;
+                send_stop(ws, Reason::Interrupted, serde_json::Value::Null).await;
                 return Ok(());
             }
         }
