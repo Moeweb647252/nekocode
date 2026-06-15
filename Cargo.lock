@@ -2426,9 +2426,11 @@ dependencies = [
  "anyhow",
  "async-trait",
  "nekocode-core",
+ "nekocode-entities",
  "nekocode-types",
  "serde",
  "serde_json",
+ "toasty",
  "tokio",
  "tracing",
 ]
