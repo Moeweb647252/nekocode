@@ -49,6 +49,10 @@ pub async fn activate_thread(
                 let cfg = nekocode_shell::config::ShellConfig::from_value(&i.config);
                 middlewares.push(Box::new(nekocode_shell::Shell::new(extensions.clone(), cfg)));
             }
+            "tool" => {
+                let cfg = nekocode_tool::config::FileConfig::from_value(&i.config);
+                middlewares.push(Box::new(nekocode_tool::ToolMiddleware::new(cfg)));
+            }
             _ => {
                 tracing::warn!("Unknown middleware: {}", i.name);
             }

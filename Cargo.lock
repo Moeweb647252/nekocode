@@ -2322,6 +2322,7 @@ dependencies = [
  "nekocode-entities",
  "nekocode-provider",
  "nekocode-shell",
+ "nekocode-tool",
  "nekocode-types",
  "scopeguard",
  "serde",
@@ -2421,6 +2422,16 @@ version = "0.1.0"
 [[package]]
 name = "nekocode-tool"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "nekocode-core",
+ "nekocode-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "nekocode-types"
