@@ -1,13 +1,15 @@
 use std::path::{Path, PathBuf};
+use serde::{Deserialize, Serialize};
 
 /// Typed configuration for the `tool` middleware. Deserialized from the
 /// per-thread `Middleware.config` JSON column (`{}` by default). Mirrors the
 /// shape of [`nekocode_shell::config::ShellConfig`].
-#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FileConfig {
     /// Working directory used to resolve relative paths. When `None`, relative
     /// paths resolve against the server's current directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
 }
 
@@ -19,6 +21,13 @@ impl FileConfig {
             return Self::default();
         }
         serde_json::from_value(v.clone()).unwrap_or_default()
+    }
+
+    /// Best-effort serialization mirroring [`Self::from_value`]. A failure
+    /// falls back to `null` so the caller can persist *something* rather than
+    /// rejecting the write.
+    pub fn to_value(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 
     /// Resolve a caller-supplied path against the working directory. Absolute
@@ -66,5 +75,28 @@ mod tests {
     fn null_falls_back_to_default() {
         let cfg = FileConfig::from_value(&serde_json::Value::Null);
         assert!(cfg.working_directory.is_none());
+    }
+
+    #[test]
+    fn to_value_roundtrips_working_directory() {
+        let cfg = FileConfig {
+            working_directory: Some("/srv/app".into()),
+        };
+        let v = cfg.to_value();
+        assert_eq!(
+            v,
+            serde_json::json!({ "workingDirectory": "/srv/app" })
+        );
+        // Round-trip back through from_value preserves the field.
+        assert_eq!(FileConfig::from_value(&v).working_directory, cfg.working_directory);
+    }
+
+    #[test]
+    fn to_value_default_is_empty_object() {
+        // Default has no fields populated, so to_value() must serialize to `{}`
+        // (not `null`) so the JSON column round-trips through from_value.
+        let v = FileConfig::default().to_value();
+        assert_eq!(v, serde_json::json!({}));
+        assert_eq!(FileConfig::from_value(&v), FileConfig::default());
     }
 }
