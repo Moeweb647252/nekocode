@@ -16,6 +16,19 @@ const messages = computed(() => {
 const userInput = ref("");
 const sending = ref(false);
 
+// Model badge for the thread sub-header. Only the Thread summary carries a
+// model field; the loaded GetThreadResponse detail does not.
+const displayModel = computed(() => selectedThread?.value?.model ?? '')
+
+// Working directory is the project context — the headline of the header.
+const displayWorkdir = computed(() => {
+  const wd = thread.value?.workingDirectory ?? selectedThread?.value?.workingDirectory
+  if (!wd) return 'untitled'
+  // Shorten to the basename + a leading ellipsis when very long, but keep the
+  // full path in the title attribute for hover.
+  return wd
+})
+
 // Track whether this component instance is still mounted so async callbacks
 // from getThread/activateThread don't write into stale state after the user
 // switches threads (the parent remounts via :key).
@@ -133,12 +146,74 @@ const sendMessage = async () => {
 };
 </script>
 <template>
-  <Splitter layout="vertical" style="height: 100%">
-    <SplitterPanel>
-      <MessageBox :messages="messages"></MessageBox>
-    </SplitterPanel>
-    <SplitterPanel>
-      <InputArea v-model:value="userInput" :disabled="sending" @sendClicked="sendMessage"></InputArea>
-    </SplitterPanel>
-  </Splitter>
+  <div class="h-full grid grid-rows-[auto_1fr_auto] min-h-0">
+    <!-- Thread sub-header: project context (working dir) is the headline -->
+    <div
+      class="flex items-center gap-2.5 px-4 py-2 border-b border-solid"
+      style="border-color: var(--app-border); background: var(--app-surface)"
+    >
+      <i class="pi pi-folder text-sm" style="color: var(--p-primary-500)" />
+      <span class="text-sm font-mono truncate" :title="displayWorkdir">{{
+        displayWorkdir
+      }}</span>
+      <span
+        v-if="thread?.title"
+        class="text-xs truncate"
+        style="color: var(--app-text-muted)"
+        >— {{ thread.title }}</span
+      >
+      <span
+        v-if="displayModel"
+        class="ml-1 text-xs px-2 py-0.5 rounded font-mono"
+        style="
+          background: color-mix(in srgb, var(--p-primary-500) 12%, transparent);
+          color: var(--p-primary-700);
+        "
+        >{{ displayModel }}</span
+      >
+      <span
+        v-if="sending"
+        class="ml-auto inline-flex items-center gap-1.5 text-xs"
+        style="color: var(--app-text-muted)"
+      >
+        <span class="dot-pulse"></span>
+        working
+      </span>
+    </div>
+
+    <!-- Messages -->
+    <div class="min-h-0">
+      <MessageBox :messages="messages" :generating="sending"></MessageBox>
+    </div>
+
+    <!-- Input -->
+    <InputArea
+      v-model:value="userInput"
+      :disabled="sending"
+      @sendClicked="sendMessage"
+    ></InputArea>
+  </div>
 </template>
+
+<style scoped>
+/* Animated "generating" indicator. */
+.dot-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  background: var(--p-primary-500);
+  display: inline-block;
+  animation: nekocode-pulse 1s ease-in-out infinite;
+}
+@keyframes nekocode-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+</style>
