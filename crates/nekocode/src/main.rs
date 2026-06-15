@@ -5,6 +5,7 @@ use clap::Parser;
 use nekocode_core::agent::Agent;
 use nekocode_types::config::Config;
 use tokio::sync::RwLock;
+use tracing::info;
 
 mod api;
 
@@ -51,7 +52,10 @@ async fn main() {
     let db = nekocode_entities::prepare_db(config_path.join("nekocode.db"))
         .await
         .expect("Failed to prepare database");
-
+    info!(
+        "Start listening at: {}:{}",
+        config.server.host, config.server.port
+    );
     let listener =
         tokio::net::TcpListener::bind(format!("{}:{}", config.server.host, config.server.port))
             .await
@@ -67,7 +71,6 @@ async fn main() {
     let router = Router::new()
         .nest("/api", api::router())
         .with_state(app_state);
-
     axum::serve(listener, router)
         .await
         .expect("Failed to serve application");

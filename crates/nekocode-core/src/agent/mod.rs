@@ -105,8 +105,10 @@ impl Agent {
         messages.push(user_message);
         // Capture the system prompt up front so it survives both the inner
         // (tool-call) and outer (middleware) regeneration loops.
+        let base_system_prompt = format!("Working directory: {}\n", thread.working_directory);
         let mut request = GenerateRequest {
             messages: messages.into_iter().map(|m| m.content.0).collect(),
+            system_prompt: Some(base_system_prompt.clone()),
             ..Default::default()
         };
         // Accumulated usage across all provider calls in this run.
@@ -123,7 +125,6 @@ impl Agent {
             let tool_specs = request.tool_specs.clone();
             let mut generate_response = GenerateResponse::new();
             loop {
-                let mut need_break = false;
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                 let provider = self.provider.clone();
                 sender
@@ -140,6 +141,11 @@ impl Agent {
                 index += 1;
                 let handle =
                     tokio::spawn(async move { provider.stream_generate(request, tx).await });
+                // Whether this generation requested any tool calls. The break
+                // decision is based on the *response* (does it contain tool
+                // calls?), NOT on the MessageEnd stream event: every provider
+                // emits exactly one MessageEnd per generation regardless of
+                // whether it stopped to call a tool or stopped naturally.
                 while let Some(event) = (&mut rx).recv().await {
                     // The agent emits its own MessageStart above before the
                     // provider call; skip the provider's duplicate so the
@@ -155,11 +161,6 @@ impl Agent {
                         .send(agent_event)
                         .map_err(|e| AgentError::Other(anyhow!("error sending agent event {e}")))?;
                     index += 1;
-
-                    match event {
-                        ProviderEvent::MessageEnd(_) => need_break = true,
-                        _ => {}
-                    }
                 }
                 let response = handle
                     .await
@@ -186,9 +187,11 @@ impl Agent {
                 .exec(&mut db)
                 .await?;
                 message_index += 1;
+                let mut this_generation_had_tool_calls = false;
                 for block in response.message.blocks.iter() {
                     match block {
                         AssistantContentBlock::ToolCall(tool_call) => {
+                            this_generation_had_tool_calls = true;
                             let tool_call_result = match tool_registry.get(&tool_call.name) {
                                 Some(tool) => ToolCallResult {
                                     id: tool_call.id.clone(),
@@ -198,7 +201,9 @@ impl Agent {
                                 },
                                 None => ToolCallResult {
                                     id: tool_call.id.clone(),
-                                    result: ToolCallResultInner::Error("Tool not found".into()),
+                                    result: ToolCallResultInner::Error {
+                                        error: "Tool not found".into(),
+                                    },
                                 },
                             };
                             create!(nekocode_entities::message::Message {
@@ -229,7 +234,16 @@ impl Agent {
                     }
                 }
                 generate_response.merge(response);
-                if need_break {
+                // Only break out of the inner (tool-call) loop when this
+                // generation finished naturally. If it emitted tool calls
+                // we've already executed them and persisted the results above,
+                // so loop again to feed those results back into a fresh
+                // generation. The decision is based on the *response*, NOT on
+                // the MessageEnd stream event: every provider emits exactly
+                // one MessageEnd per generation regardless of whether it
+                // stopped to call a tool or stopped naturally.
+                let has_tool_calls = this_generation_had_tool_calls;
+                if !has_tool_calls {
                     break;
                 }
                 this_turn = query!(Turn FILTER .id == #(this_turn.id))
@@ -272,19 +286,30 @@ impl Agent {
                     // outer middleware-driven regeneration loop.
                     request = GenerateRequest {
                         messages: messages.into_iter().map(|m| m.content.0).collect(),
-                        system_prompt,
-                        tool_specs,
+                        system_prompt: Some(base_system_prompt.clone()),
+                        ..Default::default()
                     };
                 }
             }
         }
+        // The whole turn is done: every tool round is settled and middleware
+        // accepted the output. Emit a single TurnEnd so clients can release
+        // their "sending" state. This is distinct from MessageEnd, which only
+        // closes one provider generation and may be followed by more rounds.
+        sender
+            .send(AgentEvent {
+                index,
+                data: AgentEventType::StreamEvent(StreamEvent {
+                    data: StreamEventData::TurnEnd,
+                    created_at: jiff::Timestamp::now(),
+                }),
+            })
+            .map_err(|e| AgentError::Other(anyhow!("error sending agent event {e}")))?;
         let mut update = query!(Turn FILTER .id == #(this_turn.id)).update();
         update.set_finished(true);
         update.set_usage(Json(total_usage.clone()));
         update.exec(&mut db).await?;
 
-        Ok(RunLoopSummary {
-            usage: total_usage,
-        })
+        Ok(RunLoopSummary { usage: total_usage })
     }
 }

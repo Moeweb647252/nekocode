@@ -38,7 +38,7 @@ function argsSummary(args: unknown): string {
 function resultText(result: ToolCallResultInner | undefined): string | null {
   if (!result) return null
   if (result.type === 'success') {
-    return JSON.stringify(result)
+    return JSON.stringify(result.value)
   }
   return result.error
 }

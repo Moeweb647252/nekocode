@@ -43,6 +43,10 @@ pub enum MessageContent {
 pub enum StreamEventData {
     MessageStart(MessageMetadata),
     MessageEnd(StopReason),
+    /// Signals the end of the whole agent turn (every tool round done, final
+    /// answer settled). Distinct from `MessageEnd`, which only marks the
+    /// boundary of a single provider generation.
+    TurnEnd,
     Content(String),
     ReasoningContent(String),
     ToolCall(ToolCall),

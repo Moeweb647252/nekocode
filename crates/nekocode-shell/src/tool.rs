@@ -39,7 +39,9 @@ impl Tool for OnceShellTool {
     fn spec(&self) -> nekocode_types::tool::ToolSpec {
         nekocode_types::tool::ToolSpec {
             name: "shell".to_string(),
-            description: "A tool for executing a one-shot shell command.".to_string(),
+            description:
+                "A tool for executing a one-shot shell command. The cwd is working directory."
+                    .to_string(),
             parameter_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -53,10 +55,7 @@ impl Tool for OnceShellTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let command = params
             .get("command")
             .and_then(|v| v.as_str())
@@ -106,12 +105,9 @@ impl Tool for OnceShellTool {
                     // become a zombie; SIGTERM may be ignored by a trapped
                     // child, so escalate to SIGKILL if it hasn't exited.
                     let _ = child.start_kill();
-                    let killed = tokio::time::timeout(
-                        Duration::from_secs(2),
-                        child.wait(),
-                    )
-                    .await
-                    .is_ok();
+                    let killed = tokio::time::timeout(Duration::from_secs(2), child.wait())
+                        .await
+                        .is_ok();
                     if !killed {
                         // Forcefully kill and reap to avoid leaking a zombie.
                         let _ = child.kill().await;
@@ -154,7 +150,9 @@ impl Tool for SpawnShellTool {
     fn spec(&self) -> nekocode_types::tool::ToolSpec {
         nekocode_types::tool::ToolSpec {
             name: "spawn_shell".to_string(),
-            description: "A tool for spawning a long-running shell process.".to_string(),
+            description:
+                "A tool for spawning a long-running shell process. The cwd is working directory."
+                    .to_string(),
             parameter_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -168,10 +166,7 @@ impl Tool for SpawnShellTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let command = params
             .get("command")
             .and_then(|v| v.as_str())
@@ -202,9 +197,7 @@ impl Tool for SpawnShellTool {
             .take()
             .ok_or_else(|| ToolError::ExecutionError("Failed to capture stdin".into()))?;
 
-        let shell_id = self
-            .allocate_id
-            .fetch_add(1, atomic::Ordering::Relaxed);
+        let shell_id = self.allocate_id.fetch_add(1, atomic::Ordering::Relaxed);
         let output = Arc::new(AtomicOwned::new(boxcar::Vec::new()));
         let output_cursor = Arc::new(AtomicUsize::new(0));
         let (input_tx, mut input_rx) = mpsc::unbounded_channel::<String>();
@@ -337,10 +330,7 @@ impl Tool for CancelShellTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let shell_id = parse_shell_id(&params)?;
         match self.shell_states.get(&shell_id) {
             Some(entry) => {
@@ -383,10 +373,7 @@ impl Tool for SendShellInputTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let shell_id = parse_shell_id(&params)?;
         let input = params
             .get("input")
@@ -444,19 +431,13 @@ impl Tool for FetchShellOutputTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let shell_id = parse_shell_id(&params)?;
         let entry = self
             .shell_states
             .get(&shell_id)
             .ok_or_else(|| {
-                ToolError::InvalidParameters(format!(
-                    "No active shell with shell_id {}",
-                    shell_id
-                ))
+                ToolError::InvalidParameters(format!("No active shell with shell_id {}", shell_id))
             })?
             .clone();
 
@@ -503,24 +484,18 @@ impl Tool for WaitShellDoneTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let shell_id = parse_shell_id(&params)?;
         let timeout_secs = params
             .get("timeout")
             .and_then(|v| v.as_f64())
-            .ok_or_else(|| {
-                ToolError::InvalidParameters("Missing 'timeout' parameter".into())
-            })?;
+            .ok_or_else(|| ToolError::InvalidParameters("Missing 'timeout' parameter".into()))?;
         if !timeout_secs.is_finite() || timeout_secs <= 0.0 {
             return Err(ToolError::InvalidParameters(format!(
                 "'timeout' must be a positive number of seconds, got {timeout_secs}"
             )));
         }
-        let deadline =
-            tokio::time::Instant::now() + Duration::from_secs_f64(timeout_secs);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(timeout_secs);
 
         loop {
             // The shell is "done" when either its is_running flag flips to
@@ -576,13 +551,15 @@ impl Tool for WaitShellDoneTool {
 /// to the new length. Returns the joined new lines.
 fn drain_output(state: &ShellTaskState) -> String {
     let guard = Guard::new();
-    let Some(buf) = state.output.load(atomic::Ordering::Acquire, &guard).as_ref() else {
+    let Some(buf) = state
+        .output
+        .load(atomic::Ordering::Acquire, &guard)
+        .as_ref()
+    else {
         // Buffer swapped out concurrently; nothing to read this round.
         return String::new();
     };
-    let start = state
-        .output_cursor
-        .load(atomic::Ordering::Acquire);
+    let start = state.output_cursor.load(atomic::Ordering::Acquire);
     let total = buf.count();
     if start >= total {
         return String::new();
@@ -593,9 +570,7 @@ fn drain_output(state: &ShellTaskState) -> String {
             collected.push(line.clone());
         }
     }
-    state
-        .output_cursor
-        .store(total, atomic::Ordering::Release);
+    state.output_cursor.store(total, atomic::Ordering::Release);
     collected.join("\n")
 }
 
@@ -604,5 +579,7 @@ fn parse_shell_id(params: &serde_json::Value) -> Result<u32, ToolError> {
         .get("shell_id")
         .and_then(|v| v.as_u64())
         .and_then(|n| u32::try_from(n).ok())
-        .ok_or_else(|| ToolError::InvalidParameters("Missing or invalid 'shell_id' parameter".into()))
+        .ok_or_else(|| {
+            ToolError::InvalidParameters("Missing or invalid 'shell_id' parameter".into())
+        })
 }

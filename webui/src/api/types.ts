@@ -94,7 +94,7 @@ export interface ToolCallResult {
 
 /** serde(tag = "type") with explicit rename. */
 export type ToolCallResultInner =
-  | { type: 'success';}
+  | { type: 'success'; value: unknown }
   | { type: 'error'; error: string }
 
 // ════════════════════════════════════════════════════════════════════
@@ -104,6 +104,7 @@ export type ToolCallResultInner =
 export type RawStreamEventData =
   | { type: 'messageStart'; data: MessageMetadata }
   | { type: 'messageEnd' }
+  | { type: 'turnEnd' }
   | { type: 'content'; data: string }
   | { type: 'reasoningContent'; data: string }
   | { type: 'toolCall'; data: ToolCall }

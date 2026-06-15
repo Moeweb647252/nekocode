@@ -403,8 +403,8 @@ fn convert_tool_calls(tool_calls: &[ToolCall]) -> Option<Vec<ChatCompletionMessa
 
 fn tool_result_text(result: &ToolCallResult) -> String {
     match &result.result {
-        ToolCallResultInner::Success(val) => val.to_string(),
-        ToolCallResultInner::Error(err) => err.clone(),
+        ToolCallResultInner::Success { value } => value.to_string(),
+        ToolCallResultInner::Error { error } => error.clone(),
     }
 }
 

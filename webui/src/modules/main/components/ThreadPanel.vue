@@ -130,7 +130,17 @@ const sendMessage = async () => {
           break;
         }
         case "messageEnd": {
+          // Closes the current assistant bubble only; the turn may continue
+          // with another tool round. TurnEnd is what ends the whole turn.
           currentAssistantMsg = null;
+          break;
+        }
+        case "turnEnd": {
+          // The agent finished the whole turn (all tool rounds done).
+          // Release the sending state; the trailing ws Stop frame will
+          // arrive next as a backstop for the interrupted/error paths.
+          currentAssistantMsg = null;
+          sending.value = false;
           break;
         }
       }
