@@ -1,73 +1,57 @@
 <script setup lang="ts">
-import { createThread, getDirs, listThreads } from '@/api'
-import type { Thread } from '@/api/types'
+import { createThread, createWorkspace, getDirs, listWorkspaces } from '@/api'
+import type { Thread, Workspace } from '@/api/types'
 import { useDialog } from 'primevue'
 import PickFolder from './PickFolder.vue'
 
-interface Workspace {
-  dir: string
-  name: string
-  threads: Thread[]
-  count: number
-  lastUpdated: number
-}
-
 const dialog = useDialog()
 
-const threads: Ref<Thread[]> = ref([])
+// Workspaces are a persisted, server-owned grouping (one per working
+// directory), each carrying its threads. Loaded from /workspace/list.
+const workspaces = ref<Workspace[]>([])
 const homeDir = ref()
 const selectedThread = inject<Ref<Thread>>('selectedThread')
 
-onMounted(async () => {
+async function loadWorkspaces() {
   try {
-    threads.value = await listThreads()
+    workspaces.value = await listWorkspaces()
   } catch (e) {
-    console.error('Failed to list threads:', e)
+    console.error('Failed to list workspaces:', e)
   }
+}
+
+onMounted(loadWorkspaces)
+
+// Display order: workspaces by most-recent thread activity, threads within a
+// workspace newest-first. The endpoint returns them unsorted.
+const sortedWorkspaces = computed<Workspace[]>(() => {
+  const list = workspaces.value.map((ws) => ({
+    ...ws,
+    threads: [...ws.threads].sort((a, b) => ts(b.updatedAt) - ts(a.updatedAt)),
+  }))
+  return list.sort((a, b) => lastActivity(b) - lastActivity(a))
 })
 
-// Group threads by working directory (the "workspace"). Multiple threads can
-// share one directory, so each workspace is a collapsible group whose children
-// are the threads rooted there. Workspaces sort by most-recent activity; threads
-// within a workspace sort newest-first.
-const workspaces = computed<Workspace[]>(() => {
-  const map = new Map<string, Thread[]>()
-  for (const t of threads.value) {
-    const arr = map.get(t.workingDirectory)
-    if (arr) arr.push(t)
-    else map.set(t.workingDirectory, [t])
-  }
-  const list: Workspace[] = []
-  for (const [dir, items] of map) {
-    const sorted = [...items].sort((a, b) => ts(b.updatedAt) - ts(a.updatedAt))
-    list.push({
-      dir,
-      name: dirBasename(dir),
-      threads: sorted,
-      count: sorted.length,
-      lastUpdated: sorted.length ? ts(sorted[0]!.updatedAt) : 0,
-    })
-  }
-  list.sort((a, b) => b.lastUpdated - a.lastUpdated)
-  return list
-})
+function lastActivity(ws: Workspace): number {
+  return ws.threads.reduce((max, t) => Math.max(max, ts(t.updatedAt)), 0)
+}
 
 // id of the currently selected thread (or undefined) for row highlighting.
 const selectedId = computed(() => selectedThread?.value?.id)
 
-// Collapsed state keyed by working directory. Absent = expanded (default).
-const collapsed = reactive<Record<string, boolean>>({})
-function toggleWorkspace(dir: string) {
-  collapsed[dir] = !collapsed[dir]
+// Collapsed state keyed by workspace id. Absent = expanded (default).
+const collapsed = reactive<Record<number, boolean>>({})
+function toggleWorkspace(id: number) {
+  collapsed[id] = !collapsed[id]
 }
-function isExpanded(dir: string) {
-  return !collapsed[dir]
+function isExpanded(id: number) {
+  return !collapsed[id]
 }
 function selectThread(t: Thread) {
   if (!selectedThread) return
   selectedThread.value = t
   // Keep the selected thread visible: never leave its workspace collapsed.
-  collapsed[t.workingDirectory] = false
+  if (t.workspaceId != null) collapsed[t.workspaceId] = false
 }
 
 function ts(iso: string): number {
@@ -75,8 +59,8 @@ function ts(iso: string): number {
   return Number.isNaN(n) ? 0 : n
 }
 
-// Last path segment of a working directory — the workspace label (coding
-// agents are organized around projects, not chat titles).
+// Last path segment of a working directory — the fallback workspace label when
+// no explicit name is set (coding agents are organized around projects).
 function dirBasename(path: string): string {
   const parts = (path ?? '').replace(/\\/g, '/').split('/').filter(Boolean)
   return parts[parts.length - 1] || path || 'untitled'
@@ -97,7 +81,9 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
-const newThread = async () => {
+// Top-level action: pick a directory and create (find-or-create) a workspace
+// for it. The workspace starts empty; threads are added per-workspace below.
+const newWorkspace = async () => {
   try {
     if (!homeDir.value) {
       homeDir.value = (await getDirs()).homeDir
@@ -116,15 +102,27 @@ const newThread = async () => {
         const path = typeof data === 'string' ? data : (data as { data?: string }).data
         if (!path) return
         try {
-          await createThread(path)
-          threads.value = await listThreads()
+          await createWorkspace(path)
+          await loadWorkspaces()
         } catch (e) {
-          console.error('Failed to create thread:', e)
+          console.error('Failed to create workspace:', e)
         }
       },
     })
   } catch (e) {
-    console.error('Failed to open new-thread dialog:', e)
+    console.error('Failed to open new-workspace dialog:', e)
+  }
+}
+
+// Per-workspace action: start a new thread inside an existing workspace. The
+// backend find-or-creates the workspace for the directory (already present)
+// and links the new thread to it — no folder picker needed.
+const newThreadInWorkspace = async (ws: Workspace) => {
+  try {
+    await createThread(ws.workingDirectory)
+    await loadWorkspaces()
+  } catch (e) {
+    console.error('Failed to create thread:', e)
   }
 }
 </script>
@@ -133,29 +131,44 @@ const newThread = async () => {
   <div class="h-full grid grid-rows-[auto_1fr] overflow-hidden">
     <!-- Header row -->
     <div class="px-3 py-3">
-      <Button label="New Thread" icon="pi pi-plus" class="w-full" @click="newThread()" />
+      <Button label="New Workspace" icon="pi pi-plus" class="w-full" @click="newWorkspace()" />
       <div class="mt-3 mb-1 flex items-center justify-between px-1">
         <span class="text-xs font-medium uppercase tracking-wide" style="color: var(--app-text-muted)">
           Workspaces
         </span>
-        <span class="text-xs" style="color: var(--app-text-muted)">{{ workspaces.length }}</span>
+        <span class="text-xs" style="color: var(--app-text-muted)">{{ sortedWorkspaces.length }}</span>
       </div>
     </div>
 
     <!-- Workspace list -->
     <div class="overflow-auto pb-2">
-      <div v-for="ws in workspaces" :key="ws.dir" class="workspace">
-        <button type="button" class="ws-header" :title="ws.dir" @click="toggleWorkspace(ws.dir)">
-          <i
-            class="pi ws-chevron"
-            :class="isExpanded(ws.dir) ? 'pi-chevron-down' : 'pi-chevron-right'"
-          />
-          <i class="pi pi-folder ws-icon" />
-          <span class="ws-name">{{ ws.name }}</span>
-          <span class="ws-count">{{ ws.count }}</span>
-        </button>
+      <div v-for="ws in sortedWorkspaces" :key="ws.id" class="workspace">
+        <div class="ws-row">
+          <button
+            type="button"
+            class="ws-header"
+            :title="ws.workingDirectory"
+            @click="toggleWorkspace(ws.id)"
+          >
+            <i
+              class="pi ws-chevron"
+              :class="isExpanded(ws.id) ? 'pi-chevron-down' : 'pi-chevron-right'"
+            />
+            <i class="pi pi-folder ws-icon" />
+            <span class="ws-name">{{ ws.name || dirBasename(ws.workingDirectory) }}</span>
+            <span class="ws-count">{{ ws.threads.length }}</span>
+          </button>
+          <button
+            type="button"
+            class="ws-add"
+            title="New thread in this workspace"
+            @click="newThreadInWorkspace(ws)"
+          >
+            <i class="pi pi-plus" />
+          </button>
+        </div>
 
-        <div v-show="isExpanded(ws.dir)" class="ws-threads">
+        <div v-show="isExpanded(ws.id)" class="ws-threads">
           <button
             v-for="t in ws.threads"
             :key="t.id"
@@ -171,21 +184,28 @@ const newThread = async () => {
         </div>
       </div>
 
-      <div v-if="!workspaces.length" class="px-2 py-6 text-center text-sm" style="color: var(--app-text-muted)">
-        No threads yet.
+      <div v-if="!sortedWorkspaces.length" class="px-2 py-6 text-center text-sm" style="color: var(--app-text-muted)">
+        No workspaces yet.
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* Workspace row: header + inline add-thread button. */
+.ws-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 2px 4px;
+}
 /* Workspace header: a clickable row that toggles its thread sub-list. */
 .ws-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  margin: 2px 4px;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 7px 10px;
   border: 1px solid transparent;
   border-radius: 10px;
@@ -200,6 +220,35 @@ const newThread = async () => {
   background: var(--p-surface-100);
 }
 .app-dark .ws-header:hover {
+  background: var(--p-surface-800);
+}
+/* Inline add-thread button — hidden until the row is hovered. */
+.ws-add {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.12s ease,
+    background-color 0.12s ease;
+}
+.ws-row:hover .ws-add {
+  opacity: 1;
+}
+.ws-add:hover {
+  background: var(--p-surface-100);
+  color: var(--p-primary-500);
+}
+.app-dark .ws-add:hover {
   background: var(--p-surface-800);
 }
 .ws-chevron {

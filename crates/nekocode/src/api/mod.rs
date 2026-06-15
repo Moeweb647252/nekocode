@@ -4,6 +4,7 @@ pub mod generate;
 pub mod middleware;
 pub mod thread;
 pub mod util;
+pub mod workspace;
 
 use axum::{
     Router,
@@ -20,6 +21,7 @@ use crate::{AppState, api::error::ApiError};
 pub fn router() -> Router<AppState> {
     Router::new()
         .nest("/thread", thread::router())
+        .nest("/workspace", workspace::router())
         .nest("/auth", auth::router())
         .nest("/generate", generate::router())
         .nest("/middleware", middleware::router())
@@ -114,6 +116,7 @@ pub mod prelude {
     pub use axum::{Json, extract::State};
     pub use nekocode_entities::{
         message::Message, middleware::Middleware, thread::Thread, token::Token, turn::Turn,
+        workspace::Workspace,
     };
     pub use serde::{Deserialize, Serialize};
 }

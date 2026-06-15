@@ -15,9 +15,16 @@ pub async fn create_thread(
         let config = state.config.read().await;
         config.default_model.clone()
     };
+    // Ensure a workspace owns this working directory before creating the thread,
+    // then link the thread to it. `working_directory` is denormalized onto the
+    // thread too so the agent run-loop / get_thread need no join.
+    let workspace =
+        nekocode_entities::workspace::find_or_create(&mut state.db, &payload.working_directory)
+            .await?;
     let thread = toasty::create!(Thread {
         working_directory: payload.working_directory.clone(),
         model: model,
+        workspace_id: Some(workspace.id),
     })
     .exec(&mut state.db)
     .await?;

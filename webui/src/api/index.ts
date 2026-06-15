@@ -10,5 +10,12 @@ export {
 } from './thread'
 export { streamGenerate, watchStream } from './generate'
 export type { GenerateCallbacks } from './generate'
+export {
+  createWorkspace,
+  listWorkspaces,
+  getWorkspace,
+  updateWorkspace,
+  deleteWorkspace,
+} from './workspace'
 export { getDirs, listDir } from './util'
 export type { DirsResponse, ListDirEntry } from './util'

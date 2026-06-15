@@ -14,8 +14,21 @@ export interface Thread {
   workingDirectory: string
   model: string
   generateStartTurnId: number | null
+  workspaceId: number | null
   updatedAt: string
   createdAt: string
+}
+
+// A workspace owns the threads that share a working directory. `name` is an
+// optional display label (defaults to the directory basename); `threads` is
+// materialized by the /workspace/list and /workspace/get endpoints.
+export interface Workspace {
+  id: number
+  workingDirectory: string
+  name: string | null
+  updatedAt: string
+  createdAt: string
+  threads: Thread[]
 }
 
 export interface Turn {
