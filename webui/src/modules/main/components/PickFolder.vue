@@ -75,9 +75,10 @@ const goUp = async () => {
       :pt="{
         list: { style: 'max-height: 340px' },
       }"
+      @option-dblclick="(e) => enterDir(e.value)"
     >
       <template #option="{ option }">
-        <div class="flex items-center gap-2.5 py-0.5" @dblclick="enterDir(option)">
+        <div class="flex items-center gap-2.5">
           <i
             class="pi"
             :class="option.isDir ? 'pi-folder' : 'pi-file'"
@@ -122,7 +123,8 @@ const goUp = async () => {
   border-radius: 10px;
 }
 :deep(.p-listbox-option) {
-  padding: 6px 10px;
+  padding: 10px 12px;
+  min-height: 40px;
   border-radius: 8px;
   margin: 1px 2px;
 }
