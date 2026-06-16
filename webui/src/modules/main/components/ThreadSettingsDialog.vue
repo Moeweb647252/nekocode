@@ -22,16 +22,22 @@ const originalModel = ref('')
 
 const activeSection = ref<'basic' | 'middlewares'>('basic')
 
-interface MwDraft {
+// Hardcoded middleware kinds. The list is a fixed Shell / Tool / MCP set; each
+// item is a collapsible row with an enable toggle and a typed config form.
+const MW_NAMES = ['shell', 'tool', 'mcp'] as const
+type MwName = (typeof MW_NAMES)[number]
+
+interface MwEntry {
   id: number | null // null = newly created, not yet persisted
-  name: string
   config: Record<string, unknown>
   original: Record<string, unknown>
   envsRows: { key: string; value: string }[]
   toolsRows: { name: string; enabled: boolean }[] // MCP only
 }
-const middlewares = ref<MwDraft[]>([])
-const deletedIds = ref<number[]>([])
+
+const enabled = reactive<Record<MwName, boolean>>({ shell: false, tool: false, mcp: false })
+const expanded = reactive<Record<MwName, boolean>>({ shell: false, tool: false, mcp: false })
+const entries = reactive<Record<MwName, MwEntry | null>>({ shell: null, tool: null, mcp: null })
 
 const modelChanged = computed(() => model.value !== originalModel.value)
 const titleChanged = computed(() => title.value !== originalTitle.value)
@@ -40,15 +46,37 @@ function splitEnvs(cfg: Record<string, unknown>): { key: string; value: string }
   const envs = (cfg.envs as Record<string, string> | undefined) ?? {}
   return Object.entries(envs).map(([key, value]) => ({ key, value: String(value ?? '') }))
 }
-
 function splitTools(cfg: Record<string, unknown>): { name: string; enabled: boolean }[] {
   const tools = (cfg.toolsEnabled as Record<string, boolean> | undefined) ?? {}
-  return Object.entries(tools).map(([name, enabled]) => ({ name, enabled: !!enabled }))
+  return Object.entries(tools).map(([name, on]) => ({ name, enabled: !!on }))
 }
-
 function setField(cfg: Record<string, unknown>, key: string, value: unknown): void {
   cfg[key] = value
 }
+
+function defaultConfig(name: MwName): Record<string, unknown> {
+  switch (name) {
+    case 'shell':
+      return { workingDirectory: null, shell: null, timeoutSecs: null, envs: {} }
+    case 'tool':
+      return { workingDirectory: null }
+    case 'mcp':
+      return { serverCommand: '', serverUrl: '', envs: {}, toolsEnabled: {} }
+  }
+}
+
+function makeEntry(name: MwName, config: Record<string, unknown>, id: number | null): MwEntry {
+  return {
+    id,
+    config: { ...config },
+    original: { ...config },
+    envsRows: splitEnvs(config),
+    toolsRows: splitTools(config),
+  }
+}
+
+const LABELS: Record<MwName, string> = { shell: 'Shell', tool: 'Tool', mcp: 'MCP' }
+const ICONS: Record<MwName, string> = { shell: 'pi-terminal', tool: 'pi-wrench', mcp: 'pi-bolt' }
 
 onMounted(async () => {
   if (threadId == null) return
@@ -63,14 +91,24 @@ onMounted(async () => {
     model.value = ''
     originalModel.value = ''
     models.value = modelList
-    middlewares.value = mws.map((m: Middleware) => ({
-      id: m.id,
-      name: m.name,
-      config: { ...m.config },
-      original: { ...m.config },
-      envsRows: splitEnvs(m.config),
-      toolsRows: splitTools(m.config),
-    }))
+
+    // Group by name (take the first of each kind).
+    const byName: Partial<Record<MwName, Middleware>> = {}
+    for (const m of mws) {
+      if ((MW_NAMES as readonly string[]).includes(m.name) && !byName[m.name as MwName]) {
+        byName[m.name as MwName] = m
+      }
+    }
+    for (const name of MW_NAMES) {
+      const m = byName[name]
+      if (m) {
+        enabled[name] = true
+        entries[name] = makeEntry(name, m.config, m.id)
+      } else {
+        enabled[name] = false
+        entries[name] = null
+      }
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -78,67 +116,67 @@ onMounted(async () => {
   }
 })
 
-function configDiffers(draft: MwDraft): boolean {
-  return JSON.stringify(draft.config) !== JSON.stringify(draft.original)
+function toggleExpand(name: MwName) {
+  expanded[name] = !expanded[name]
 }
 
-const middlewareChanged = computed(
-  () =>
-    middlewares.value.some((d) => configDiffers(d)) ||
-    middlewares.value.some((d) => d.id == null) ||
-    deletedIds.value.length > 0,
-)
+function onEnableToggle(name: MwName, on: boolean) {
+  enabled[name] = on
+  if (on) {
+    if (!entries[name]) entries[name] = makeEntry(name, defaultConfig(name), null)
+    expanded[name] = true
+  } else {
+    expanded[name] = false
+  }
+}
+
+function configDiffers(entry: MwEntry): boolean {
+  return JSON.stringify(entry.config) !== JSON.stringify(entry.original)
+}
+
+const middlewareChanged = computed(() => {
+  for (const name of MW_NAMES) {
+    if (enabled[name]) {
+      const e = entries[name]
+      if (!e || e.id == null || configDiffers(e)) return true
+    } else if (entries[name]?.id != null) {
+      return true // was persisted, now disabled → will be deleted
+    }
+  }
+  return false
+})
 const dirty = computed(() => titleChanged.value || modelChanged.value || middlewareChanged.value)
 
-// Sync env rows into the config's `envs` before save (shell + mcp both use envs).
-function flushEnvs(draft: MwDraft) {
-  if (draft.name !== 'shell' && draft.name !== 'mcp') return
+function flushEnvs(entry: MwEntry, name: MwName) {
+  if (name !== 'shell' && name !== 'mcp') return
   const envs: Record<string, string> = {}
-  for (const row of draft.envsRows) {
+  for (const row of entry.envsRows) {
     const key = row.key.trim()
     if (key) envs[key] = row.value
   }
-  setField(draft.config, 'envs', envs)
+  setField(entry.config, 'envs', envs)
 }
-
-// Sync tool rows into the mcp config's `toolsEnabled`.
-function flushTools(draft: MwDraft) {
-  if (draft.name !== 'mcp') return
+function flushTools(entry: MwEntry, name: MwName) {
+  if (name !== 'mcp') return
   const toolsEnabled: Record<string, boolean> = {}
-  for (const row of draft.toolsRows) {
-    const name = row.name.trim()
-    if (name) toolsEnabled[name] = row.enabled
+  for (const row of entry.toolsRows) {
+    const n = row.name.trim()
+    if (n) toolsEnabled[n] = row.enabled
   }
-  setField(draft.config, 'toolsEnabled', toolsEnabled)
+  setField(entry.config, 'toolsEnabled', toolsEnabled)
 }
 
-function addEnvRow(draft: MwDraft) {
-  draft.envsRows.push({ key: '', value: '' })
+function addEnvRow(entry: MwEntry) {
+  entry.envsRows.push({ key: '', value: '' })
 }
-function removeEnvRow(draft: MwDraft, index: number) {
-  draft.envsRows.splice(index, 1)
+function removeEnvRow(entry: MwEntry, index: number) {
+  entry.envsRows.splice(index, 1)
 }
-function addToolRow(draft: MwDraft) {
-  draft.toolsRows.push({ name: '', enabled: true })
+function addToolRow(entry: MwEntry) {
+  entry.toolsRows.push({ name: '', enabled: true })
 }
-function removeToolRow(draft: MwDraft, index: number) {
-  draft.toolsRows.splice(index, 1)
-}
-
-function addMcpMiddleware() {
-  middlewares.value.push({
-    id: null,
-    name: 'mcp',
-    config: { serverCommand: '', serverUrl: '', envs: {}, toolsEnabled: {} },
-    original: { serverCommand: '', serverUrl: '', envs: {}, toolsEnabled: {} },
-    envsRows: [],
-    toolsRows: [],
-  })
-}
-
-function removeMiddleware(draft: MwDraft, index: number) {
-  if (draft.id != null) deletedIds.value.push(draft.id)
-  middlewares.value.splice(index, 1)
+function removeToolRow(entry: MwEntry, index: number) {
+  entry.toolsRows.splice(index, 1)
 }
 
 async function save() {
@@ -149,31 +187,28 @@ async function save() {
   saving.value = true
   error.value = ''
   try {
-    if (titleChanged.value) {
-      await updateThread(threadId, title.value, null)
-    }
-    if (modelChanged.value) {
-      await updateThread(threadId, null, model.value)
-    }
+    if (titleChanged.value) await updateThread(threadId, title.value, null)
+    if (modelChanged.value) await updateThread(threadId, null, model.value)
     let needsReactivation = modelChanged.value
-    for (const draft of middlewares.value) {
-      flushEnvs(draft)
-      flushTools(draft)
-      if (draft.id == null) {
-        await createMiddleware(threadId, draft.name, draft.config)
-        needsReactivation = true
-      } else if (configDiffers(draft)) {
-        await updateMiddleware(draft.id, draft.config)
+    for (const name of MW_NAMES) {
+      const e = entries[name]
+      if (enabled[name]) {
+        if (!e) continue
+        flushEnvs(e, name)
+        flushTools(e, name)
+        if (e.id == null) {
+          await createMiddleware(threadId, name, e.config)
+          needsReactivation = true
+        } else if (configDiffers(e)) {
+          await updateMiddleware(e.id, e.config)
+          needsReactivation = true
+        }
+      } else if (e?.id != null) {
+        await deleteMiddleware(e.id)
         needsReactivation = true
       }
     }
-    for (const id of deletedIds.value) {
-      await deleteMiddleware(id)
-      needsReactivation = true
-    }
-    if (needsReactivation) {
-      await activateThread(threadId)
-    }
+    if (needsReactivation) await activateThread(threadId)
     dialogRef?.value?.close(true)
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -214,7 +249,9 @@ function cancel() {
     <!-- Content area -->
     <main class="content">
       <div v-if="loading" class="state-msg">Loading…</div>
-      <div v-else-if="error && !middlewares.length" class="state-msg state-error">{{ error }}</div>
+      <div v-else-if="error && !entries.shell && !entries.tool && !entries.mcp" class="state-msg state-error">
+        {{ error }}
+      </div>
       <template v-else>
         <!-- Basic info section -->
         <section v-show="activeSection === 'basic'" class="section">
@@ -239,136 +276,125 @@ function cancel() {
         <!-- Middlewares section -->
         <section v-show="activeSection === 'middlewares'" class="section">
           <h2 class="section-title">Middlewares</h2>
-          <p class="section-subtitle">Per-thread middleware configuration.</p>
+          <p class="section-subtitle">Enable and configure per-thread middleware.</p>
 
-          <div v-for="(draft, idx) in middlewares" :key="draft.id ?? `new-${idx}`" class="mw-block">
-            <div class="mw-header">
-              <div class="mw-name">{{ draft.name }}</div>
-              <button
-                type="button"
-                class="mw-delete"
-                title="Remove middleware"
-                @click="removeMiddleware(draft, idx)"
-              >
-                <i class="pi pi-trash"></i>
-              </button>
+          <div v-for="name in MW_NAMES" :key="name" class="mw-block">
+            <div class="mw-header" @click="toggleExpand(name)">
+              <i class="pi mw-icon" :class="ICONS[name]"></i>
+              <span class="mw-name">{{ LABELS[name] }}</span>
+              <span class="mw-status" :class="{ on: enabled[name] }">
+                {{ enabled[name] ? 'Enabled' : 'Disabled' }}
+              </span>
+              <div class="mw-toggle" @click.stop>
+                <ToggleSwitch
+                  :model-value="enabled[name]"
+                  @update:model-value="(v) => onEnableToggle(name, v as boolean)"
+                />
+              </div>
+              <i class="pi mw-chevron" :class="expanded[name] ? 'pi-chevron-up' : 'pi-chevron-down'"></i>
             </div>
 
-            <!-- shell -->
-            <template v-if="draft.name === 'shell'">
-              <div class="field">
-                <label class="field-label">Working directory</label>
-                <InputText v-model="(draft.config.workingDirectory as string | undefined)" class="field-input" placeholder="(inherit server cwd)" />
-              </div>
-              <div class="field">
-                <label class="field-label">Shell</label>
-                <InputText v-model="(draft.config.shell as string | undefined)" class="field-input" placeholder="bash" />
-              </div>
-              <div class="field">
-                <label class="field-label">Timeout (seconds)</label>
-                <InputText
-                  :model-value="draft.config.timeoutSecs == null ? '' : String(draft.config.timeoutSecs)"
-                  @update:model-value="(v: string | undefined) => setField(draft.config, 'timeoutSecs', v === '' || v === undefined ? null : Number(v))"
-                  class="field-input"
-                  placeholder="(no timeout)"
-                />
-              </div>
-              <div class="field">
-                <label class="field-label">Environment variables</label>
-                <div class="env-list">
-                  <div v-for="(row, i) in draft.envsRows" :key="i" class="env-row">
-                    <InputText v-model="row.key" class="env-key" placeholder="KEY" />
-                    <InputText v-model="row.value" class="env-val" placeholder="value" />
-                    <button type="button" class="env-remove" title="Remove" @click="removeEnvRow(draft, i)">
-                      <i class="pi pi-times"></i>
-                    </button>
+            <div v-show="expanded[name]" class="mw-body">
+              <template v-if="enabled[name] && entries[name]">
+                <!-- shell -->
+                <template v-if="name === 'shell'">
+                  <div class="field">
+                    <label class="field-label">Working directory</label>
+                    <InputText v-model="(entries[name]!.config.workingDirectory as string | undefined)" class="field-input" placeholder="(inherit server cwd)" />
                   </div>
-                  <button type="button" class="env-add" @click="addEnvRow(draft)">
-                    <i class="pi pi-plus"></i> Add variable
-                  </button>
-                </div>
-              </div>
-            </template>
-
-            <!-- tool -->
-            <template v-else-if="draft.name === 'tool'">
-              <div class="field">
-                <label class="field-label">Working directory</label>
-                <InputText v-model="(draft.config.workingDirectory as string | undefined)" class="field-input" placeholder="(inherit server cwd)" />
-              </div>
-            </template>
-
-            <!-- mcp -->
-            <template v-else-if="draft.name === 'mcp'">
-              <div class="field">
-                <label class="field-label">Server URL (HTTP)</label>
-                <InputText
-                  v-model="(draft.config.serverUrl as string | undefined)"
-                  class="field-input"
-                  placeholder="http://localhost:8080/mcp"
-                />
-                <span class="field-hint">Streamable HTTP transport. Takes precedence over the command below.</span>
-              </div>
-              <div class="field">
-                <label class="field-label">Server command (stdio)</label>
-                <InputText
-                  v-model="(draft.config.serverCommand as string | undefined)"
-                  class="field-input"
-                  placeholder="npx -y @modelcontextprotocol/server-filesystem"
-                />
-                <span class="field-hint">Shell command to spawn the MCP server over stdio.</span>
-              </div>
-              <div class="field">
-                <label class="field-label">Environment variables</label>
-                <div class="env-list">
-                  <div v-for="(row, i) in draft.envsRows" :key="i" class="env-row">
-                    <InputText v-model="row.key" class="env-key" placeholder="KEY" />
-                    <InputText v-model="row.value" class="env-val" placeholder="value" />
-                    <button type="button" class="env-remove" title="Remove" @click="removeEnvRow(draft, i)">
-                      <i class="pi pi-times"></i>
-                    </button>
+                  <div class="field">
+                    <label class="field-label">Shell</label>
+                    <InputText v-model="(entries[name]!.config.shell as string | undefined)" class="field-input" placeholder="bash" />
                   </div>
-                  <button type="button" class="env-add" @click="addEnvRow(draft)">
-                    <i class="pi pi-plus"></i> Add variable
-                  </button>
-                </div>
-              </div>
-              <div class="field">
-                <label class="field-label">Enabled tools</label>
-                <span class="field-hint">Tools are discovered from the server at runtime. Only tools listed here with the toggle on are exposed to the model.</span>
-                <div class="env-list">
-                  <div v-for="(row, i) in draft.toolsRows" :key="i" class="tool-row">
-                    <InputText v-model="row.name" class="tool-name" placeholder="tool_name" />
-                    <ToggleSwitch v-model="row.enabled" />
-                    <button type="button" class="env-remove" title="Remove" @click="removeToolRow(draft, i)">
-                      <i class="pi pi-times"></i>
-                    </button>
+                  <div class="field">
+                    <label class="field-label">Timeout (seconds)</label>
+                    <InputText
+                      :model-value="entries[name]!.config.timeoutSecs == null ? '' : String(entries[name]!.config.timeoutSecs)"
+                      @update:model-value="(v: string | undefined) => setField(entries[name]!.config, 'timeoutSecs', v === '' || v === undefined ? null : Number(v))"
+                      class="field-input"
+                      placeholder="(no timeout)"
+                    />
                   </div>
-                  <button type="button" class="env-add" @click="addToolRow(draft)">
-                    <i class="pi pi-plus"></i> Add tool
-                  </button>
-                </div>
-              </div>
-            </template>
+                  <div class="field">
+                    <label class="field-label">Environment variables</label>
+                    <div class="env-list">
+                      <div v-for="(row, i) in entries[name]!.envsRows" :key="i" class="env-row">
+                        <InputText v-model="row.key" class="env-key" placeholder="KEY" />
+                        <InputText v-model="row.value" class="env-val" placeholder="value" />
+                        <button type="button" class="env-remove" title="Remove" @click="removeEnvRow(entries[name]!, i)">
+                          <i class="pi pi-times"></i>
+                        </button>
+                      </div>
+                      <button type="button" class="env-add" @click="addEnvRow(entries[name]!)">
+                        <i class="pi pi-plus"></i> Add variable
+                      </button>
+                    </div>
+                  </div>
+                </template>
 
-            <!-- fallback: raw JSON -->
-            <template v-else>
-              <Textarea
-                :model-value="JSON.stringify(draft.config, null, 2)"
-                @update:model-value="(v: string) => { try { draft.config = JSON.parse(v) } catch {} }"
-                rows="5"
-                class="field-input raw-json"
-              />
-            </template>
-          </div>
+                <!-- tool -->
+                <template v-else-if="name === 'tool'">
+                  <div class="field">
+                    <label class="field-label">Working directory</label>
+                    <InputText v-model="(entries[name]!.config.workingDirectory as string | undefined)" class="field-input" placeholder="(inherit server cwd)" />
+                  </div>
+                </template>
 
-          <!-- Add MCP button -->
-          <button type="button" class="mw-add" @click="addMcpMiddleware">
-            <i class="pi pi-plus"></i> Add MCP Server
-          </button>
-
-          <div v-if="!middlewares.length && !deletedIds.length" class="section-subtitle mt-2">
-            No middlewares configured.
+                <!-- mcp -->
+                <template v-else-if="name === 'mcp'">
+                  <div class="field">
+                    <label class="field-label">Server URL (HTTP)</label>
+                    <InputText
+                      v-model="(entries[name]!.config.serverUrl as string | undefined)"
+                      class="field-input"
+                      placeholder="http://localhost:8080/mcp"
+                    />
+                    <span class="field-hint">Streamable HTTP transport. Takes precedence over the command below.</span>
+                  </div>
+                  <div class="field">
+                    <label class="field-label">Server command (stdio)</label>
+                    <InputText
+                      v-model="(entries[name]!.config.serverCommand as string | undefined)"
+                      class="field-input"
+                      placeholder="npx -y @modelcontextprotocol/server-filesystem"
+                    />
+                    <span class="field-hint">Shell command to spawn the MCP server over stdio.</span>
+                  </div>
+                  <div class="field">
+                    <label class="field-label">Environment variables</label>
+                    <div class="env-list">
+                      <div v-for="(row, i) in entries[name]!.envsRows" :key="i" class="env-row">
+                        <InputText v-model="row.key" class="env-key" placeholder="KEY" />
+                        <InputText v-model="row.value" class="env-val" placeholder="value" />
+                        <button type="button" class="env-remove" title="Remove" @click="removeEnvRow(entries[name]!, i)">
+                          <i class="pi pi-times"></i>
+                        </button>
+                      </div>
+                      <button type="button" class="env-add" @click="addEnvRow(entries[name]!)">
+                        <i class="pi pi-plus"></i> Add variable
+                      </button>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label class="field-label">Enabled tools</label>
+                    <span class="field-hint">Tools are discovered from the server at runtime. Only tools listed here with the toggle on are exposed to the model.</span>
+                    <div class="env-list">
+                      <div v-for="(row, i) in entries[name]!.toolsRows" :key="i" class="tool-row">
+                        <InputText v-model="row.name" class="tool-name" placeholder="tool_name" />
+                        <ToggleSwitch v-model="row.enabled" />
+                        <button type="button" class="env-remove" title="Remove" @click="removeToolRow(entries[name]!, i)">
+                          <i class="pi pi-times"></i>
+                        </button>
+                      </div>
+                      <button type="button" class="env-add" @click="addToolRow(entries[name]!)">
+                        <i class="pi pi-plus"></i> Add tool
+                      </button>
+                    </div>
+                  </div>
+                </template>
+              </template>
+              <div v-else class="mw-empty-hint">Enable to configure.</div>
+            </div>
           </div>
         </section>
 
@@ -458,39 +484,57 @@ function cancel() {
 
 .mw-block {
   border-top: 1px solid var(--app-border);
-  padding-top: 12px;
-  margin-top: 12px;
+  margin-top: 8px;
 }
-.mw-block:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+.mw-block:first-of-type { border-top: none; margin-top: 0; }
 .mw-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
+  gap: 10px;
+  padding: 10px 4px;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background-color 0.12s ease;
+}
+.mw-header:hover { background: var(--p-surface-100); }
+.app-dark .mw-header:hover { background: var(--p-surface-800); }
+.mw-icon {
+  font-size: 0.95rem;
+  color: var(--p-primary-500);
+  width: 18px;
+  text-align: center;
 }
 .mw-name {
-  font-size: 0.82rem;
+  font-size: 0.88rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--p-primary-500);
 }
-.mw-delete {
-  flex-shrink: 0;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
+.mw-status {
+  font-size: 0.72rem;
   color: var(--app-text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.8rem;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--p-surface-100);
 }
-.mw-delete:hover { background: var(--p-surface-100); color: #dc2626; }
-.app-dark .mw-delete:hover { background: var(--p-surface-800); }
+.app-dark .mw-status { background: var(--p-surface-800); }
+.mw-status.on {
+  color: var(--p-primary-700);
+  background: color-mix(in srgb, var(--p-primary-500) 14%, transparent);
+}
+.app-dark .mw-status.on { color: var(--p-primary-400); }
+.mw-toggle { display: flex; align-items: center; }
+.mw-chevron {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
+}
+.mw-body {
+  padding: 4px 4px 8px 28px;
+}
+.mw-empty-hint {
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
+  font-style: italic;
+}
 
 .env-list { display: flex; flex-direction: column; gap: 6px; }
 .env-row, .tool-row { display: flex; gap: 6px; align-items: center; }
@@ -512,7 +556,7 @@ function cancel() {
 }
 .env-remove:hover { background: var(--p-surface-100); color: #dc2626; }
 .app-dark .env-remove:hover { background: var(--p-surface-800); }
-.env-add, .mw-add {
+.env-add {
   align-self: flex-start;
   border: 1px dashed var(--app-border);
   border-radius: 8px;
@@ -526,7 +570,7 @@ function cancel() {
   gap: 6px;
   margin-top: 6px;
 }
-.env-add:hover, .mw-add:hover {
+.env-add:hover {
   border-color: var(--p-primary-500);
   color: var(--p-primary-500);
 }
@@ -541,6 +585,5 @@ function cancel() {
   gap: 8px;
   margin-top: 12px;
 }
-.mt-2 { margin-top: 8px; }
 .mt-3 { margin-top: 12px; }
 </style>
