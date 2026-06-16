@@ -7,10 +7,25 @@ export async function listMiddlewares(threadId: number): Promise<Middleware[]> {
   return resp.data
 }
 
+export async function createMiddleware(
+  threadId: number,
+  name: string,
+  config: Record<string, unknown>,
+): Promise<Middleware> {
+  const resp = await post<Middleware>('/middleware/create', { threadId, name, config })
+  if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to create middleware')
+  return resp.data
+}
+
 export async function updateMiddleware(
   id: number,
   config: Record<string, unknown>,
 ): Promise<void> {
   const resp = await post<null>('/middleware/update', { id, config })
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to update middleware')
+}
+
+export async function deleteMiddleware(id: number): Promise<void> {
+  const resp = await post<null>('/middleware/delete', { id })
+  if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to delete middleware')
 }

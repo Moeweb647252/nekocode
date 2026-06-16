@@ -29,3 +29,4 @@ nekocode-types.workspace = true
 nekocode-provider.workspace = true
 nekocode-shell.workspace = true
 nekocode-tool.workspace = true
+nekocode-mcp.workspace = true

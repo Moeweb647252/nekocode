@@ -2320,6 +2320,7 @@ dependencies = [
  "jiff",
  "nekocode-core",
  "nekocode-entities",
+ "nekocode-mcp",
  "nekocode-provider",
  "nekocode-shell",
  "nekocode-tool",
@@ -2374,6 +2375,18 @@ version = "0.1.0"
 [[package]]
 name = "nekocode-mcp"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "nekocode-core",
+ "nekocode-types",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "nekocode-provider"

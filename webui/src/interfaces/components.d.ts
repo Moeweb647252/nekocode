@@ -23,6 +23,7 @@ declare module 'vue' {
     Splitter: typeof import('primevue/splitter')['default']
     SplitterPanel: typeof import('primevue/splitterpanel')['default']
     Textarea: typeof import('primevue/textarea')['default']
+    ToggleSwitch: typeof import('primevue/toggleswitch')['default']
   }
 }
 
@@ -39,4 +40,5 @@ declare global {
   const Splitter: typeof import('primevue/splitter')['default']
   const SplitterPanel: typeof import('primevue/splitterpanel')['default']
   const Textarea: typeof import('primevue/textarea')['default']
+  const ToggleSwitch: typeof import('primevue/toggleswitch')['default']
 }

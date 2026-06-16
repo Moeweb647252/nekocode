@@ -57,6 +57,10 @@ pub async fn activate_thread(
                     thread_id,
                 )));
             }
+            "mcp" => {
+                let cfg = nekocode_mcp::config::McpConfig::from_value(&i.config);
+                middlewares.push(Box::new(nekocode_mcp::McpMiddleware::new(cfg)));
+            }
             _ => {
                 tracing::warn!("Unknown middleware: {}", i.name);
             }

@@ -19,4 +19,4 @@ export {
 } from './workspace'
 export { getDirs, listDir, getModels } from './util'
 export type { DirsResponse, ListDirEntry } from './util'
-export { listMiddlewares, updateMiddleware } from './middleware'
+export { createMiddleware, listMiddlewares, updateMiddleware, deleteMiddleware } from './middleware'
