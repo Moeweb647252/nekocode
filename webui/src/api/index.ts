@@ -17,5 +17,6 @@ export {
   updateWorkspace,
   deleteWorkspace,
 } from './workspace'
-export { getDirs, listDir } from './util'
+export { getDirs, listDir, getModels } from './util'
 export type { DirsResponse, ListDirEntry } from './util'
+export { listMiddlewares, updateMiddleware } from './middleware'

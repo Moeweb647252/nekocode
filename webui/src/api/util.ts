@@ -29,3 +29,10 @@ export async function getDirs(): Promise<DirsResponse> {
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to get directories')
   return resp.data
 }
+
+/** GET /api/util/models — available model names from the server config. */
+export async function getModels(): Promise<string[]> {
+  const resp = await get<string[]>('/util/models')
+  if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to get models')
+  return resp.data
+}

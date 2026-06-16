@@ -4,7 +4,7 @@ const input = defineModel('value', {
   type: String,
   required: true,
 })
-const emit = defineEmits(['sendClicked'])
+const emit = defineEmits(['sendClicked', 'settingsClicked'])
 
 const ta = ref<HTMLTextAreaElement | null>(null)
 
@@ -45,6 +45,16 @@ const canSend = computed(() => !props.disabled && (input.value ?? '').trim().len
           :disabled="disabled"
           @keydown="onKeydown"
         ></textarea>
+        <button
+          type="button"
+          class="icon-btn"
+          title="Thread settings"
+          aria-label="Thread settings"
+          :disabled="disabled"
+          @click="emit('settingsClicked')"
+        >
+          <i class="pi pi-cog"></i>
+        </button>
         <button
           type="button"
           class="send-btn"
@@ -136,5 +146,34 @@ const canSend = computed(() => !props.disabled && (input.value ?? '').trim().len
 }
 .app-dark .send-btn:disabled {
   background: var(--p-surface-700);
+}
+
+.icon-btn {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--app-text-muted);
+  background: transparent;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+  font-size: 0.85rem;
+}
+.icon-btn:hover:not(:disabled) {
+  background: var(--p-surface-100);
+  color: var(--p-primary-500);
+}
+.app-dark .icon-btn:hover:not(:disabled) {
+  background: var(--p-surface-800);
+}
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

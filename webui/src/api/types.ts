@@ -173,3 +173,9 @@ export interface GetThreadResponse {
   generating: boolean
   turns: Turn[]
 }
+
+export interface Middleware {
+  id: number
+  name: string
+  config: Record<string, unknown>
+}

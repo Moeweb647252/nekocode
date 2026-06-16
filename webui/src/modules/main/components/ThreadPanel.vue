@@ -2,8 +2,12 @@
 import type { AgentEvent, ChatMessage, GetThreadResponse, Thread } from "@/api/types.ts";
 import InputArea from "./InputArea.vue";
 import MessageBox from "./MessageBox.vue";
+import ThreadSettingsDialog from "./ThreadSettingsDialog.vue";
 import { activateThread, getThread } from "@/api/thread.ts";
 import { streamGenerate } from "@/api/generate.ts";
+import { useDialog } from 'primevue';
+
+const dialog = useDialog();
 
 const selectedThread = inject<Ref<Thread>>("selectedThread");
 const thread = ref<GetThreadResponse | null>(null);
@@ -154,6 +158,24 @@ const sendMessage = async () => {
     },
   });
 };
+
+const openSettings = () => {
+  const id = thread.value?.id;
+  if (id == null) return;
+  dialog.open(ThreadSettingsDialog, {
+    props: {
+      header: 'Thread Settings',
+      modal: true,
+    },
+    data: { threadId: id },
+    onClose: (changed: unknown) => {
+      if (changed === true) {
+        // Reload thread to refresh title/model in the sub-header.
+        getThread(id).then(t => { if (alive) thread.value = t; }).catch(console.error);
+      }
+    },
+  });
+}
 </script>
 <template>
   <div class="h-full grid grid-rows-[auto_1fr_auto] min-h-0">
@@ -201,6 +223,7 @@ const sendMessage = async () => {
       v-model:value="userInput"
       :disabled="sending"
       @sendClicked="sendMessage"
+      @settingsClicked="openSettings"
     ></InputArea>
   </div>
 </template>

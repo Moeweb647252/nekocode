@@ -14,12 +14,15 @@ declare module 'vue' {
   export interface GlobalComponents {
     AppHeader: typeof import('./../components/AppHeader.vue')['default']
     Button: typeof import('primevue/button')['default']
+    InputText: typeof import('primevue/inputtext')['default']
     Listbox: typeof import('primevue/listbox')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    Select: typeof import('primevue/select')['default']
     SelectButton: typeof import('primevue/selectbutton')['default']
     Splitter: typeof import('primevue/splitter')['default']
     SplitterPanel: typeof import('primevue/splitterpanel')['default']
+    Textarea: typeof import('primevue/textarea')['default']
   }
 }
 
@@ -27,10 +30,13 @@ declare module 'vue' {
 declare global {
   const AppHeader: typeof import('./../components/AppHeader.vue')['default']
   const Button: typeof import('primevue/button')['default']
+  const InputText: typeof import('primevue/inputtext')['default']
   const Listbox: typeof import('primevue/listbox')['default']
   const RouterLink: typeof import('vue-router')['RouterLink']
   const RouterView: typeof import('vue-router')['RouterView']
+  const Select: typeof import('primevue/select')['default']
   const SelectButton: typeof import('primevue/selectbutton')['default']
   const Splitter: typeof import('primevue/splitter')['default']
   const SplitterPanel: typeof import('primevue/splitterpanel')['default']
+  const Textarea: typeof import('primevue/textarea')['default']
 }

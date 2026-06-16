@@ -45,8 +45,13 @@ export async function getThread(
 /** POST /api/thread/update */
 export async function updateThread(
   id: number,
-  title?: string,
+  title?: string | null,
+  model?: string | null,
 ): Promise<void> {
-  const resp = await post<null>('/thread/update', { id, title: title ?? null })
+  const resp = await post<null>('/thread/update', {
+    id,
+    title: title ?? null,
+    model: model ?? null,
+  })
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to update thread')
 }
