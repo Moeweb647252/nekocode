@@ -167,6 +167,7 @@ export interface GetThreadResponse {
   id: number
   title: string | null
   workingDirectory: string
+  model: string
   updatedAt: string
   createdAt: string
   active: boolean

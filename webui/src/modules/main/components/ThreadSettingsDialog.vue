@@ -98,8 +98,8 @@ onMounted(async () => {
     ]);
     title.value = thread.title ?? "";
     originalTitle.value = title.value;
-    model.value = "";
-    originalModel.value = "";
+    model.value = thread.model ?? "";
+    originalModel.value = model.value;
     models.value = modelList;
 
     // Partition middlewares by name.
@@ -343,7 +343,6 @@ function cancel() {
             <Select
               v-model="model"
               :options="models"
-              option-label="undefined"
               placeholder="Select a model"
               class="field-input"
             />
