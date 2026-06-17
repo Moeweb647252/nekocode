@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import {
   activateThread, createMiddleware, deleteMiddleware, getModels, getThread,
-  listMiddlewares, updateMiddleware, updateThread,
+  listMiddlewares, probeMcp, updateMiddleware, updateThread,
 } from '@/api'
 import type { Middleware } from '@/api/types'
 import type { DynamicDialogInstance } from 'primevue/dynamicdialogoptions'
@@ -32,12 +32,16 @@ interface MwEntry {
   config: Record<string, unknown>
   original: Record<string, unknown>
   envsRows: { key: string; value: string }[]
-  toolsRows: { name: string; enabled: boolean }[] // MCP only
+  toolsRows: { name: string; description: string; enabled: boolean }[] // MCP only
 }
 
 const enabled = reactive<Record<MwName, boolean>>({ shell: false, tool: false, mcp: false })
 const expanded = reactive<Record<MwName, boolean>>({ shell: false, tool: false, mcp: false })
 const entries = reactive<Record<MwName, MwEntry | null>>({ shell: null, tool: null, mcp: null })
+
+// MCP probe state.
+const probing = ref(false)
+const probeError = ref('')
 
 const modelChanged = computed(() => model.value !== originalModel.value)
 const titleChanged = computed(() => title.value !== originalTitle.value)
@@ -46,9 +50,9 @@ function splitEnvs(cfg: Record<string, unknown>): { key: string; value: string }
   const envs = (cfg.envs as Record<string, string> | undefined) ?? {}
   return Object.entries(envs).map(([key, value]) => ({ key, value: String(value ?? '') }))
 }
-function splitTools(cfg: Record<string, unknown>): { name: string; enabled: boolean }[] {
+function splitTools(cfg: Record<string, unknown>): { name: string; description: string; enabled: boolean }[] {
   const tools = (cfg.toolsEnabled as Record<string, boolean> | undefined) ?? {}
-  return Object.entries(tools).map(([name, on]) => ({ name, enabled: !!on }))
+  return Object.entries(tools).map(([name, on]) => ({ name, description: '', enabled: !!on }))
 }
 function setField(cfg: Record<string, unknown>, key: string, value: unknown): void {
   cfg[key] = value
@@ -61,7 +65,7 @@ function defaultConfig(name: MwName): Record<string, unknown> {
     case 'tool':
       return { workingDirectory: null }
     case 'mcp':
-      return { serverCommand: '', serverUrl: '', envs: {}, toolsEnabled: {} }
+      return { transport: 'stdio', serverCommand: '', serverUrl: '', envs: {}, toolsEnabled: {} }
   }
 }
 
@@ -77,6 +81,11 @@ function makeEntry(name: MwName, config: Record<string, unknown>, id: number | n
 
 const LABELS: Record<MwName, string> = { shell: 'Shell', tool: 'Tool', mcp: 'MCP' }
 const ICONS: Record<MwName, string> = { shell: 'pi-terminal', tool: 'pi-wrench', mcp: 'pi-bolt' }
+
+const TRANSPORT_OPTIONS: { label: string; value: string; icon: string }[] = [
+  { label: 'Stdio', value: 'stdio', icon: 'pi-terminal' },
+  { label: 'HTTP', value: 'http', icon: 'pi-globe' },
+]
 
 onMounted(async () => {
   if (threadId == null) return
@@ -134,11 +143,19 @@ function configDiffers(entry: MwEntry): boolean {
   return JSON.stringify(entry.config) !== JSON.stringify(entry.original)
 }
 
+function toolsChanged(entry: MwEntry): boolean {
+  const current: Record<string, boolean> = {}
+  for (const row of entry.toolsRows) {
+    if (row.name.trim()) current[row.name] = row.enabled
+  }
+  return JSON.stringify(current) !== JSON.stringify((entry.original.toolsEnabled as Record<string, boolean> | undefined) ?? {})
+}
+
 const middlewareChanged = computed(() => {
   for (const name of MW_NAMES) {
     if (enabled[name]) {
       const e = entries[name]
-      if (!e || e.id == null || configDiffers(e)) return true
+      if (!e || e.id == null || configDiffers(e) || (name === 'mcp' && toolsChanged(e))) return true
     } else if (entries[name]?.id != null) {
       return true // was persisted, now disabled → will be deleted
     }
@@ -172,11 +189,31 @@ function addEnvRow(entry: MwEntry) {
 function removeEnvRow(entry: MwEntry, index: number) {
   entry.envsRows.splice(index, 1)
 }
-function addToolRow(entry: MwEntry) {
-  entry.toolsRows.push({ name: '', enabled: true })
-}
-function removeToolRow(entry: MwEntry, index: number) {
-  entry.toolsRows.splice(index, 1)
+
+// Probe the MCP server with the current (unsaved) config and replace the tool
+// list with whatever the server advertises. Preserves the enabled state of
+// already-known tools; newly discovered tools default to enabled.
+async function testConnection(entry: MwEntry) {
+  probing.value = true
+  probeError.value = ''
+  flushEnvs(entry, 'mcp')
+  const transport = (entry.config.transport as string) || 'stdio'
+  const serverCommand = (entry.config.serverCommand as string) || null
+  const serverUrl = (entry.config.serverUrl as string) || null
+  const envs = (entry.config.envs as Record<string, string>) ?? {}
+  try {
+    const tools = await probeMcp(transport, serverCommand, serverUrl, envs)
+    const prev = new Map(entry.toolsRows.map((r) => [r.name, r.enabled]))
+    entry.toolsRows = tools.map((t) => ({
+      name: t.name,
+      description: t.description ?? '',
+      enabled: prev.has(t.name) ? prev.get(t.name)! : true,
+    }))
+  } catch (e) {
+    probeError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    probing.value = false
+  }
 }
 
 async function save() {
@@ -342,53 +379,89 @@ function cancel() {
 
                 <!-- mcp -->
                 <template v-else-if="name === 'mcp'">
+                  <!-- Transport selector: HTTP or stdio are mutually exclusive. -->
                   <div class="field">
-                    <label class="field-label">Server URL (HTTP)</label>
-                    <InputText
-                      v-model="(entries[name]!.config.serverUrl as string | undefined)"
-                      class="field-input"
-                      placeholder="http://localhost:8080/mcp"
-                    />
-                    <span class="field-hint">Streamable HTTP transport. Takes precedence over the command below.</span>
+                    <label class="field-label">Transport</label>
+                    <SelectButton
+                      :model-value="(entries[name]!.config.transport as string) || 'stdio'"
+                      :options="TRANSPORT_OPTIONS"
+                      option-value="value"
+                      option-label="label"
+                      @update:model-value="(v) => setField(entries[name]!.config, 'transport', v)"
+                    >
+                      <template #option="{ option }">
+                        <i class="pi" :class="option.icon"></i>
+                        <span class="ml-1">{{ option.label }}</span>
+                      </template>
+                    </SelectButton>
                   </div>
-                  <div class="field">
-                    <label class="field-label">Server command (stdio)</label>
-                    <InputText
-                      v-model="(entries[name]!.config.serverCommand as string | undefined)"
-                      class="field-input"
-                      placeholder="npx -y @modelcontextprotocol/server-filesystem"
-                    />
-                    <span class="field-hint">Shell command to spawn the MCP server over stdio.</span>
-                  </div>
-                  <div class="field">
-                    <label class="field-label">Environment variables</label>
-                    <div class="env-list">
-                      <div v-for="(row, i) in entries[name]!.envsRows" :key="i" class="env-row">
-                        <InputText v-model="row.key" class="env-key" placeholder="KEY" />
-                        <InputText v-model="row.value" class="env-val" placeholder="value" />
-                        <button type="button" class="env-remove" title="Remove" @click="removeEnvRow(entries[name]!, i)">
-                          <i class="pi pi-times"></i>
+
+                  <!-- HTTP transport -->
+                  <template v-if="((entries[name]!.config.transport as string) || 'stdio') === 'http'">
+                    <div class="field">
+                      <label class="field-label">Server URL</label>
+                      <InputText
+                        v-model="(entries[name]!.config.serverUrl as string | undefined)"
+                        class="field-input"
+                        placeholder="http://localhost:8080/mcp"
+                      />
+                      <span class="field-hint">Streamable HTTP endpoint for the MCP server.</span>
+                    </div>
+                  </template>
+
+                  <!-- Stdio transport -->
+                  <template v-else>
+                    <div class="field">
+                      <label class="field-label">Server command</label>
+                      <InputText
+                        v-model="(entries[name]!.config.serverCommand as string | undefined)"
+                        class="field-input"
+                        placeholder="npx -y @modelcontextprotocol/server-filesystem"
+                      />
+                      <span class="field-hint">Shell command to spawn the MCP server over stdio.</span>
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Environment variables</label>
+                      <div class="env-list">
+                        <div v-for="(row, i) in entries[name]!.envsRows" :key="i" class="env-row">
+                          <InputText v-model="row.key" class="env-key" placeholder="KEY" />
+                          <InputText v-model="row.value" class="env-val" placeholder="value" />
+                          <button type="button" class="env-remove" title="Remove" @click="removeEnvRow(entries[name]!, i)">
+                            <i class="pi pi-times"></i>
+                          </button>
+                        </div>
+                        <button type="button" class="env-add" @click="addEnvRow(entries[name]!)">
+                          <i class="pi pi-plus"></i> Add variable
                         </button>
                       </div>
-                      <button type="button" class="env-add" @click="addEnvRow(entries[name]!)">
-                        <i class="pi pi-plus"></i> Add variable
-                      </button>
                     </div>
-                  </div>
+                  </template>
+
                   <div class="field">
-                    <label class="field-label">Enabled tools</label>
-                    <span class="field-hint">Tools are discovered from the server at runtime. Only tools listed here with the toggle on are exposed to the model.</span>
+                    <div class="field-row">
+                      <label class="field-label">Tools</label>
+                      <Button
+                        label="Test connection"
+                        icon="pi pi-bolt"
+                        size="small"
+                        severity="secondary"
+                        :loading="probing"
+                        @click="entries[name] && testConnection(entries[name]!)"
+                      />
+                    </div>
+                    <span class="field-hint">Tools are discovered from the server — click "Test connection" to probe. Toggle which ones the model can use.</span>
+                    <div v-if="probeError" class="state-error">{{ probeError }}</div>
                     <div class="env-list">
                       <div v-for="(row, i) in entries[name]!.toolsRows" :key="i" class="tool-row">
-                        <InputText v-model="row.name" class="tool-name" placeholder="tool_name" />
+                        <div class="tool-info">
+                          <span class="tool-name-display">{{ row.name }}</span>
+                          <span v-if="row.description" class="tool-desc">{{ row.description }}</span>
+                        </div>
                         <ToggleSwitch v-model="row.enabled" />
-                        <button type="button" class="env-remove" title="Remove" @click="removeToolRow(entries[name]!, i)">
-                          <i class="pi pi-times"></i>
-                        </button>
                       </div>
-                      <button type="button" class="env-add" @click="addToolRow(entries[name]!)">
-                        <i class="pi pi-plus"></i> Add tool
-                      </button>
+                      <div v-if="!entries[name]!.toolsRows.length" class="mw-empty-hint">
+                        No tools discovered yet.
+                      </div>
                     </div>
                   </div>
                 </template>
@@ -481,6 +554,12 @@ function cancel() {
 .field-label { font-size: 0.78rem; color: var(--app-text-muted); }
 .field-hint { font-size: 0.72rem; color: var(--app-text-muted); opacity: 0.8; }
 .field-input { width: 100%; }
+.field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 
 .mw-block {
   border-top: 1px solid var(--app-border);
@@ -540,7 +619,19 @@ function cancel() {
 .env-row, .tool-row { display: flex; gap: 6px; align-items: center; }
 .env-key { flex: 0 0 38%; }
 .env-val { flex: 1; }
-.tool-name { flex: 1; }
+.tool-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tool-name-display {
+  font-size: 0.82rem;
+  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.tool-desc {
+  font-size: 0.72rem;
+  color: var(--app-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .env-remove {
   flex-shrink: 0;
   width: 28px;

@@ -32,38 +32,62 @@ impl McpMiddleware {
     async fn get_client(&self) -> Option<Arc<McpClient>> {
         self.client
             .get_or_init(|| async {
-                // Prefer HTTP if configured; otherwise fall back to stdio.
-                if let Some(url) = self.config.server_url.clone() {
-                    let client = McpClient::connect_http(url);
-                    if let Err(e) = client.initialize().await {
-                        warn!("MCP HTTP initialize failed: {e}");
-                        return None;
-                    }
-                    return Some(Arc::new(client));
-                }
-                let Some(cmd) = self.config.server_command.clone() else {
-                    warn!("MCP middleware has no server_command or server_url configured");
-                    return None;
-                };
-                match McpClient::spawn(&cmd, &self.config.envs).await {
-                    Ok(client) => {
-                        let client = Arc::new(client);
-                        if let Err(e) = client.initialize().await {
-                            warn!("MCP stdio initialize failed: {e}");
-                            client.kill().await;
+                let client = match self.config.transport {
+                    crate::config::Transport::Http => {
+                        let Some(url) = self.config.server_url.clone() else {
+                            warn!("MCP http transport configured but no serverUrl");
                             return None;
+                        };
+                        McpClient::connect_http(url)
+                    }
+                    crate::config::Transport::Stdio => {
+                        let Some(cmd) = self.config.server_command.clone() else {
+                            warn!("MCP stdio transport configured but no serverCommand");
+                            return None;
+                        };
+                        match McpClient::spawn(&cmd, &self.config.envs).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                warn!("MCP spawn failed ({cmd}): {e}");
+                                return None;
+                            }
                         }
-                        Some(client)
                     }
-                    Err(e) => {
-                        warn!("MCP spawn failed ({}): {e}", cmd);
-                        None
-                    }
+                };
+                if let Err(e) = client.initialize().await {
+                    warn!("MCP initialize failed: {e}");
+                    client.kill().await;
+                    return None;
                 }
+                Some(Arc::new(client))
             })
             .await
             .clone()
     }
+}
+
+/// Probe an MCP server with the given config: connect, initialize, list tools,
+/// then tear down the connection. Returns the discovered tools. Used by the
+/// settings UI's "Test connection" button to populate the tool list.
+pub async fn probe(config: &McpConfig) -> anyhow::Result<Vec<client::McpToolInfo>> {
+    let client = match config.transport {
+        crate::config::Transport::Http => {
+            let url = config.server_url.clone().ok_or_else(|| {
+                anyhow::anyhow!("no serverUrl configured for http transport")
+            })?;
+            McpClient::connect_http(url)
+        }
+        crate::config::Transport::Stdio => {
+            let cmd = config.server_command.clone().ok_or_else(|| {
+                anyhow::anyhow!("no serverCommand configured for stdio transport")
+            })?;
+            McpClient::spawn(&cmd, &config.envs).await?
+        }
+    };
+    client.initialize().await?;
+    let tools = client.list_tools().await?;
+    client.kill().await;
+    Ok(tools)
 }
 
 #[async_trait]

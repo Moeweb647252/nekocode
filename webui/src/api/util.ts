@@ -36,3 +36,25 @@ export async function getModels(): Promise<string[]> {
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to get models')
   return resp.data
 }
+
+export interface ProbeToolInfo {
+  name: string
+  description: string | null
+}
+
+/** POST /api/util/mcp_probe — connect to an MCP server, list its tools. */
+export async function probeMcp(
+  transport: string,
+  serverCommand: string | null,
+  serverUrl: string | null,
+  envs: Record<string, string>,
+): Promise<ProbeToolInfo[]> {
+  const resp = await post<{ tools: ProbeToolInfo[] }>('/util/mcp_probe', {
+    transport,
+    serverCommand,
+    serverUrl,
+    envs,
+  })
+  if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to probe MCP server')
+  return resp.data.tools
+}
