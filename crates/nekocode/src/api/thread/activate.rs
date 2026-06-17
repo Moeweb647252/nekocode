@@ -44,6 +44,11 @@ pub async fn activate_thread(
     let mut middlewares: Vec<Box<dyn nekocode_core::middleware::Middleware>> = Vec::new();
 
     for i in thread.middlewares.get() {
+        // Skip disabled middlewares — they stay persisted but aren't built
+        // into the agent.
+        if !i.enabled {
+            continue;
+        }
         match i.name.as_str() {
             "shell" => {
                 let cfg = nekocode_shell::config::ShellConfig::from_value(&i.config);

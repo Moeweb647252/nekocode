@@ -12,6 +12,7 @@ pub struct MiddlewareResponse {
     pub id: u64,
     pub name: String,
     pub config: serde_json::Value,
+    pub enabled: bool,
 }
 
 pub async fn list_middlewares(
@@ -27,6 +28,7 @@ pub async fn list_middlewares(
             id: m.id,
             name: m.name,
             config: m.config.0,
+            enabled: m.enabled,
         })
         .collect();
     ApiResponse::ok(middlewares)

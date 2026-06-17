@@ -1,261 +1,298 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed } from "vue";
 import {
-  activateThread, createMiddleware, deleteMiddleware, getModels, getThread,
-  listMiddlewares, probeMcp, updateMiddleware, updateThread,
-} from '@/api'
-import type { Middleware } from '@/api/types'
-import type { DynamicDialogInstance } from 'primevue/dynamicdialogoptions'
+  activateThread,
+  createMiddleware,
+  deleteMiddleware,
+  getModels,
+  getThread,
+  listMiddlewares,
+  probeMcp,
+  updateMiddleware,
+  updateThread,
+} from "@/api";
+import type { DynamicDialogInstance } from "primevue/dynamicdialogoptions";
 
-const dialogRef = inject<Ref<DynamicDialogInstance>>('dialogRef')
-const threadId = (dialogRef?.value?.data as { threadId?: number } | undefined)?.threadId
+const dialogRef = inject<Ref<DynamicDialogInstance>>("dialogRef");
+const threadId = (dialogRef?.value?.data as { threadId?: number } | undefined)?.threadId;
 
-const models = ref<string[]>([])
-const loading = ref(true)
-const saving = ref(false)
-const error = ref('')
+const models = ref<string[]>([]);
+const loading = ref(true);
+const saving = ref(false);
+const error = ref("");
 
-const title = ref('')
-const originalTitle = ref('')
-const model = ref('')
-const originalModel = ref('')
+const title = ref("");
+const originalTitle = ref("");
+const model = ref("");
+const originalModel = ref("");
 
-const activeSection = ref<'basic' | 'middlewares'>('basic')
+const activeSection = ref<"basic" | "middlewares">("basic");
 
-// Hardcoded middleware kinds. The list is a fixed Shell / Tool / MCP set; each
-// item is a collapsible row with an enable toggle and a typed config form.
-const MW_NAMES = ['shell', 'tool', 'mcp'] as const
-type MwName = (typeof MW_NAMES)[number]
-
-interface MwEntry {
-  id: number | null // null = newly created, not yet persisted
-  config: Record<string, unknown>
-  original: Record<string, unknown>
-  envsRows: { key: string; value: string }[]
-  toolsRows: { name: string; description: string; enabled: boolean }[] // MCP only
+// Singleton middlewares: Shell and Tool are at most one per thread.
+// Their enabled flag lives on the DB row; toggling updates the row.
+interface SingletonEntry {
+  id: number | null;
+  enabled: boolean;
+  originalEnabled: boolean;
+  config: Record<string, unknown>;
+  original: Record<string, unknown>;
+  envsRows: { key: string; value: string }[];
 }
 
-const enabled = reactive<Record<MwName, boolean>>({ shell: false, tool: false, mcp: false })
-const expanded = reactive<Record<MwName, boolean>>({ shell: false, tool: false, mcp: false })
-const entries = reactive<Record<MwName, MwEntry | null>>({ shell: null, tool: null, mcp: null })
+const shellEntry = ref<SingletonEntry | null>(null);
+const toolEntry = ref<SingletonEntry | null>(null);
+const shellExpanded = ref(false);
+const toolExpanded = ref(false);
+const mcpExpanded = ref(true);
 
-// MCP probe state.
-const probing = ref(false)
-const probeError = ref('')
+// MCP middlewares: zero-or-many. Each row has its own enabled toggle.
+// Deleting a row removes it; adding creates a new one.
+interface McpEntry {
+  id: number | null;
+  enabled: boolean;
+  originalEnabled: boolean;
+  config: Record<string, unknown>;
+  original: Record<string, unknown>;
+  envsRows: { key: string; value: string }[];
+  toolsRows: { name: string; description: string; enabled: boolean }[];
+}
+const mcpEntries = ref<McpEntry[]>([]);
+const deletedMcpIds = ref<number[]>([]);
 
-const modelChanged = computed(() => model.value !== originalModel.value)
-const titleChanged = computed(() => title.value !== originalTitle.value)
+const probing = ref(false);
+const probeError = ref("");
+
+const modelChanged = computed(() => model.value !== originalModel.value);
+const titleChanged = computed(() => title.value !== originalTitle.value);
 
 function splitEnvs(cfg: Record<string, unknown>): { key: string; value: string }[] {
-  const envs = (cfg.envs as Record<string, string> | undefined) ?? {}
-  return Object.entries(envs).map(([key, value]) => ({ key, value: String(value ?? '') }))
+  const envs = (cfg.envs as Record<string, string> | undefined) ?? {};
+  return Object.entries(envs).map(([key, value]) => ({ key, value: String(value ?? "") }));
 }
-function splitTools(cfg: Record<string, unknown>): { name: string; description: string; enabled: boolean }[] {
-  const tools = (cfg.toolsEnabled as Record<string, boolean> | undefined) ?? {}
-  return Object.entries(tools).map(([name, on]) => ({ name, description: '', enabled: !!on }))
+function splitTools(
+  cfg: Record<string, unknown>,
+): { name: string; description: string; enabled: boolean }[] {
+  const tools = (cfg.toolsEnabled as Record<string, boolean> | undefined) ?? {};
+  return Object.entries(tools).map(([name, on]) => ({ name, description: "", enabled: !!on }));
 }
 function setField(cfg: Record<string, unknown>, key: string, value: unknown): void {
-  cfg[key] = value
+  cfg[key] = value;
 }
 
-function defaultConfig(name: MwName): Record<string, unknown> {
-  switch (name) {
-    case 'shell':
-      return { workingDirectory: null, shell: null, timeoutSecs: null, envs: {} }
-    case 'tool':
-      return { workingDirectory: null }
-    case 'mcp':
-      return { transport: 'stdio', serverCommand: '', serverUrl: '', envs: {}, toolsEnabled: {} }
-  }
+function defaultMcpConfig(): Record<string, unknown> {
+  return { transport: "stdio", serverCommand: "", serverUrl: "", envs: {}, toolsEnabled: {} };
 }
-
-function makeEntry(name: MwName, config: Record<string, unknown>, id: number | null): MwEntry {
-  return {
-    id,
-    config: { ...config },
-    original: { ...config },
-    envsRows: splitEnvs(config),
-    toolsRows: splitTools(config),
-  }
-}
-
-const LABELS: Record<MwName, string> = { shell: 'Shell', tool: 'Tool', mcp: 'MCP' }
-const ICONS: Record<MwName, string> = { shell: 'pi-terminal', tool: 'pi-wrench', mcp: 'pi-bolt' }
 
 const TRANSPORT_OPTIONS: { label: string; value: string; icon: string }[] = [
-  { label: 'Stdio', value: 'stdio', icon: 'pi-terminal' },
-  { label: 'HTTP', value: 'http', icon: 'pi-globe' },
-]
+  { label: "Stdio", value: "stdio", icon: "pi-terminal" },
+  { label: "HTTP", value: "http", icon: "pi-globe" },
+];
 
 onMounted(async () => {
-  if (threadId == null) return
+  if (threadId == null) return;
   try {
     const [thread, mws, modelList] = await Promise.all([
       getThread(threadId),
       listMiddlewares(threadId),
       getModels(),
-    ])
-    title.value = thread.title ?? ''
-    originalTitle.value = title.value
-    model.value = ''
-    originalModel.value = ''
-    models.value = modelList
+    ]);
+    title.value = thread.title ?? "";
+    originalTitle.value = title.value;
+    model.value = "";
+    originalModel.value = "";
+    models.value = modelList;
 
-    // Group by name (take the first of each kind).
-    const byName: Partial<Record<MwName, Middleware>> = {}
+    // Partition middlewares by name.
     for (const m of mws) {
-      if ((MW_NAMES as readonly string[]).includes(m.name) && !byName[m.name as MwName]) {
-        byName[m.name as MwName] = m
-      }
-    }
-    for (const name of MW_NAMES) {
-      const m = byName[name]
-      if (m) {
-        enabled[name] = true
-        entries[name] = makeEntry(name, m.config, m.id)
-      } else {
-        enabled[name] = false
-        entries[name] = null
+      if (m.name === "shell" && !shellEntry.value) {
+        shellEntry.value = {
+          id: m.id,
+          enabled: m.enabled,
+          originalEnabled: m.enabled,
+          config: { ...m.config },
+          original: { ...m.config },
+          envsRows: splitEnvs(m.config),
+        };
+      } else if (m.name === "tool" && !toolEntry.value) {
+        toolEntry.value = {
+          id: m.id,
+          enabled: m.enabled,
+          originalEnabled: m.enabled,
+          config: { ...m.config },
+          original: { ...m.config },
+          envsRows: [],
+        };
+      } else if (m.name === "mcp") {
+        mcpEntries.value.push({
+          id: m.id,
+          enabled: m.enabled,
+          originalEnabled: m.enabled,
+          config: { ...m.config },
+          original: { ...m.config },
+          envsRows: splitEnvs(m.config),
+          toolsRows: splitTools(m.config),
+        });
       }
     }
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    loading.value = false
+    loading.value = false;
   }
-})
+});
 
-function toggleExpand(name: MwName) {
-  expanded[name] = !expanded[name]
+function singletonChanged(e: SingletonEntry): boolean {
+  return JSON.stringify(e.config) !== JSON.stringify(e.original) || e.enabled !== e.originalEnabled;
 }
-
-function onEnableToggle(name: MwName, on: boolean) {
-  enabled[name] = on
-  if (on) {
-    if (!entries[name]) entries[name] = makeEntry(name, defaultConfig(name), null)
-    expanded[name] = true
-  } else {
-    expanded[name] = false
-  }
-}
-
-function configDiffers(entry: MwEntry): boolean {
-  return JSON.stringify(entry.config) !== JSON.stringify(entry.original)
-}
-
-function toolsChanged(entry: MwEntry): boolean {
-  const current: Record<string, boolean> = {}
-  for (const row of entry.toolsRows) {
-    if (row.name.trim()) current[row.name] = row.enabled
-  }
-  return JSON.stringify(current) !== JSON.stringify((entry.original.toolsEnabled as Record<string, boolean> | undefined) ?? {})
+function mcpChanged(e: McpEntry): boolean {
+  return JSON.stringify(e.config) !== JSON.stringify(e.original) || e.enabled !== e.originalEnabled;
 }
 
 const middlewareChanged = computed(() => {
-  for (const name of MW_NAMES) {
-    if (enabled[name]) {
-      const e = entries[name]
-      if (!e || e.id == null || configDiffers(e) || (name === 'mcp' && toolsChanged(e))) return true
-    } else if (entries[name]?.id != null) {
-      return true // was persisted, now disabled → will be deleted
-    }
+  if (shellEntry.value && singletonChanged(shellEntry.value)) return true;
+  if (toolEntry.value && singletonChanged(toolEntry.value)) return true;
+  for (const e of mcpEntries.value) {
+    if (e.id == null || mcpChanged(e)) return true;
   }
-  return false
-})
-const dirty = computed(() => titleChanged.value || modelChanged.value || middlewareChanged.value)
+  if (deletedMcpIds.value.length > 0) return true;
+  return false;
+});
+const dirty = computed(() => titleChanged.value || modelChanged.value || middlewareChanged.value);
 
-function flushEnvs(entry: MwEntry, name: MwName) {
-  if (name !== 'shell' && name !== 'mcp') return
-  const envs: Record<string, string> = {}
+function flushEnvs(entry: {
+  envsRows: { key: string; value: string }[];
+  config: Record<string, unknown>;
+}) {
+  const envs: Record<string, string> = {};
   for (const row of entry.envsRows) {
-    const key = row.key.trim()
-    if (key) envs[key] = row.value
+    const key = row.key.trim();
+    if (key) envs[key] = row.value;
   }
-  setField(entry.config, 'envs', envs)
+  setField(entry.config, "envs", envs);
 }
-function flushTools(entry: MwEntry, name: MwName) {
-  if (name !== 'mcp') return
-  const toolsEnabled: Record<string, boolean> = {}
+function flushTools(entry: McpEntry) {
+  const toolsEnabled: Record<string, boolean> = {};
   for (const row of entry.toolsRows) {
-    const n = row.name.trim()
-    if (n) toolsEnabled[n] = row.enabled
+    const name = row.name.trim();
+    if (name) toolsEnabled[name] = row.enabled;
   }
-  setField(entry.config, 'toolsEnabled', toolsEnabled)
+  setField(entry.config, "toolsEnabled", toolsEnabled);
 }
 
-function addEnvRow(entry: MwEntry) {
-  entry.envsRows.push({ key: '', value: '' })
+function addEnvRow(entry: { envsRows: { key: string; value: string }[] }) {
+  entry.envsRows.push({ key: "", value: "" });
 }
-function removeEnvRow(entry: MwEntry, index: number) {
-  entry.envsRows.splice(index, 1)
+function removeEnvRow(entry: { envsRows: { key: string; value: string }[] }, index: number) {
+  entry.envsRows.splice(index, 1);
 }
 
-// Probe the MCP server with the current (unsaved) config and replace the tool
-// list with whatever the server advertises. Preserves the enabled state of
-// already-known tools; newly discovered tools default to enabled.
-async function testConnection(entry: MwEntry) {
-  probing.value = true
-  probeError.value = ''
-  flushEnvs(entry, 'mcp')
-  const transport = (entry.config.transport as string) || 'stdio'
-  const serverCommand = (entry.config.serverCommand as string) || null
-  const serverUrl = (entry.config.serverUrl as string) || null
-  const envs = (entry.config.envs as Record<string, string>) ?? {}
+async function testConnection(entry: McpEntry) {
+  probing.value = true;
+  probeError.value = "";
+  flushEnvs(entry);
+  const transport = (entry.config.transport as string) || "stdio";
+  const serverCommand = (entry.config.serverCommand as string) || null;
+  const serverUrl = (entry.config.serverUrl as string) || null;
+  const envs = (entry.config.envs as Record<string, string>) ?? {};
   try {
-    const tools = await probeMcp(transport, serverCommand, serverUrl, envs)
-    const prev = new Map(entry.toolsRows.map((r) => [r.name, r.enabled]))
+    const tools = await probeMcp(transport, serverCommand, serverUrl, envs);
+    const prev = new Map(entry.toolsRows.map((r) => [r.name, r.enabled]));
     entry.toolsRows = tools.map((t) => ({
       name: t.name,
-      description: t.description ?? '',
+      description: t.description ?? "",
       enabled: prev.has(t.name) ? prev.get(t.name)! : true,
-    }))
+    }));
   } catch (e) {
-    probeError.value = e instanceof Error ? e.message : String(e)
+    probeError.value = e instanceof Error ? e.message : String(e);
   } finally {
-    probing.value = false
+    probing.value = false;
   }
+}
+
+function addMcpEntry() {
+  mcpEntries.value.push({
+    id: null,
+    enabled: true,
+    originalEnabled: true,
+    config: defaultMcpConfig(),
+    original: defaultMcpConfig(),
+    envsRows: [],
+    toolsRows: [],
+  });
+}
+function removeMcpEntry(index: number) {
+  const e = mcpEntries.value[index];
+  if (e && e.id != null) deletedMcpIds.value.push(e.id);
+  mcpEntries.value.splice(index, 1);
 }
 
 async function save() {
   if (threadId == null || saving.value || !dirty.value) {
-    dialogRef?.value?.close(false)
-    return
+    dialogRef?.value?.close(false);
+    return;
   }
-  saving.value = true
-  error.value = ''
+  saving.value = true;
+  error.value = "";
   try {
-    if (titleChanged.value) await updateThread(threadId, title.value, null)
-    if (modelChanged.value) await updateThread(threadId, null, model.value)
-    let needsReactivation = modelChanged.value
-    for (const name of MW_NAMES) {
-      const e = entries[name]
-      if (enabled[name]) {
-        if (!e) continue
-        flushEnvs(e, name)
-        flushTools(e, name)
-        if (e.id == null) {
-          await createMiddleware(threadId, name, e.config)
-          needsReactivation = true
-        } else if (configDiffers(e)) {
-          await updateMiddleware(e.id, e.config)
-          needsReactivation = true
-        }
-      } else if (e?.id != null) {
-        await deleteMiddleware(e.id)
-        needsReactivation = true
+    if (titleChanged.value) await updateThread(threadId, title.value, null);
+    if (modelChanged.value) await updateThread(threadId, null, model.value);
+    let needsReactivation = modelChanged.value;
+
+    // Shell singleton.
+    if (shellEntry.value) {
+      const e = shellEntry.value;
+      flushEnvs(e);
+      if (e.id == null) {
+        await createMiddleware(threadId, "shell", e.config);
+        needsReactivation = true;
+      } else if (singletonChanged(e)) {
+        await updateMiddleware(e.id, e.config, e.enabled);
+        needsReactivation = true;
       }
     }
-    if (needsReactivation) await activateThread(threadId)
-    dialogRef?.value?.close(true)
+
+    // Tool singleton.
+    if (toolEntry.value) {
+      const e = toolEntry.value;
+      if (e.id == null) {
+        await createMiddleware(threadId, "tool", e.config);
+        needsReactivation = true;
+      } else if (singletonChanged(e)) {
+        await updateMiddleware(e.id, e.config, e.enabled);
+        needsReactivation = true;
+      }
+    }
+
+    // MCP entries: create new, update changed.
+    for (const e of mcpEntries.value) {
+      flushEnvs(e);
+      flushTools(e);
+      if (e.id == null) {
+        await createMiddleware(threadId, "mcp", e.config);
+        needsReactivation = true;
+      } else if (mcpChanged(e)) {
+        await updateMiddleware(e.id, e.config, e.enabled);
+        needsReactivation = true;
+      }
+    }
+
+    // MCP entries removed in the UI.
+    for (const id of deletedMcpIds.value) {
+      await deleteMiddleware(id);
+      needsReactivation = true;
+    }
+
+    if (needsReactivation) await activateThread(threadId);
+    dialogRef?.value?.close(true);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    saving.value = false
+    saving.value = false;
   }
 }
 
 function cancel() {
-  dialogRef?.value?.close(false)
+  dialogRef?.value?.close(false);
 }
 </script>
 
@@ -286,7 +323,10 @@ function cancel() {
     <!-- Content area -->
     <main class="content">
       <div v-if="loading" class="state-msg">Loading…</div>
-      <div v-else-if="error && !entries.shell && !entries.tool && !entries.mcp" class="state-msg state-error">
+      <div
+        v-else-if="error && !shellEntry && !toolEntry && !mcpEntries.length"
+        class="state-msg state-error"
+      >
         {{ error }}
       </div>
       <template v-else>
@@ -315,79 +355,175 @@ function cancel() {
           <h2 class="section-title">Middlewares</h2>
           <p class="section-subtitle">Enable and configure per-thread middleware.</p>
 
-          <div v-for="name in MW_NAMES" :key="name" class="mw-block">
-            <div class="mw-header" @click="toggleExpand(name)">
-              <i class="pi mw-icon" :class="ICONS[name]"></i>
-              <span class="mw-name">{{ LABELS[name] }}</span>
-              <span class="mw-status" :class="{ on: enabled[name] }">
-                {{ enabled[name] ? 'Enabled' : 'Disabled' }}
+          <!-- Shell (singleton) -->
+          <div class="mw-block">
+            <div class="mw-header" @click="shellExpanded = !shellExpanded">
+              <i class="pi mw-icon pi-terminal"></i>
+              <span class="mw-name">Shell</span>
+              <span class="mw-status" :class="{ on: shellEntry?.enabled }">
+                {{ shellEntry?.enabled ? "Enabled" : "Disabled" }}
               </span>
               <div class="mw-toggle" @click.stop>
                 <ToggleSwitch
-                  :model-value="enabled[name]"
-                  @update:model-value="(v) => onEnableToggle(name, v as boolean)"
+                  :model-value="shellEntry?.enabled ?? false"
+                  @update:model-value="
+                    (v) => {
+                      if (shellEntry) shellEntry.enabled = v as boolean;
+                    }
+                  "
                 />
               </div>
-              <i class="pi mw-chevron" :class="expanded[name] ? 'pi-chevron-up' : 'pi-chevron-down'"></i>
+              <i
+                class="pi mw-chevron"
+                :class="shellExpanded ? 'pi-chevron-up' : 'pi-chevron-down'"
+              ></i>
             </div>
+            <div v-show="shellExpanded && shellEntry" class="mw-body">
+              <div class="field">
+                <label class="field-label">Working directory</label>
+                <InputText
+                  v-model="shellEntry!.config.workingDirectory as string | undefined"
+                  class="field-input"
+                  placeholder="(inherit server cwd)"
+                />
+              </div>
+              <div class="field">
+                <label class="field-label">Shell</label>
+                <InputText
+                  v-model="shellEntry!.config.shell as string | undefined"
+                  class="field-input"
+                  placeholder="bash"
+                />
+              </div>
+              <div class="field">
+                <label class="field-label">Timeout (seconds)</label>
+                <InputText
+                  :model-value="
+                    shellEntry!.config.timeoutSecs == null
+                      ? ''
+                      : String(shellEntry!.config.timeoutSecs)
+                  "
+                  @update:model-value="
+                    (v: string | undefined) =>
+                      setField(
+                        shellEntry!.config,
+                        'timeoutSecs',
+                        v === '' || v === undefined ? null : Number(v),
+                      )
+                  "
+                  class="field-input"
+                  placeholder="(no timeout)"
+                />
+              </div>
+              <div class="field">
+                <label class="field-label">Environment variables</label>
+                <div class="env-list">
+                  <div v-for="(row, i) in shellEntry!.envsRows" :key="i" class="env-row">
+                    <InputText v-model="row.key" class="env-key" placeholder="KEY" />
+                    <InputText v-model="row.value" class="env-val" placeholder="value" />
+                    <button
+                      type="button"
+                      class="env-remove"
+                      title="Remove"
+                      @click="removeEnvRow(shellEntry!, i)"
+                    >
+                      <i class="pi pi-times"></i>
+                    </button>
+                  </div>
+                  <button type="button" class="env-add" @click="addEnvRow(shellEntry!)">
+                    <i class="pi pi-plus"></i> Add variable
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
 
-            <div v-show="expanded[name]" class="mw-body">
-              <template v-if="enabled[name] && entries[name]">
-                <!-- shell -->
-                <template v-if="name === 'shell'">
-                  <div class="field">
-                    <label class="field-label">Working directory</label>
-                    <InputText v-model="(entries[name]!.config.workingDirectory as string | undefined)" class="field-input" placeholder="(inherit server cwd)" />
-                  </div>
-                  <div class="field">
-                    <label class="field-label">Shell</label>
-                    <InputText v-model="(entries[name]!.config.shell as string | undefined)" class="field-input" placeholder="bash" />
-                  </div>
-                  <div class="field">
-                    <label class="field-label">Timeout (seconds)</label>
-                    <InputText
-                      :model-value="entries[name]!.config.timeoutSecs == null ? '' : String(entries[name]!.config.timeoutSecs)"
-                      @update:model-value="(v: string | undefined) => setField(entries[name]!.config, 'timeoutSecs', v === '' || v === undefined ? null : Number(v))"
-                      class="field-input"
-                      placeholder="(no timeout)"
-                    />
-                  </div>
-                  <div class="field">
-                    <label class="field-label">Environment variables</label>
-                    <div class="env-list">
-                      <div v-for="(row, i) in entries[name]!.envsRows" :key="i" class="env-row">
-                        <InputText v-model="row.key" class="env-key" placeholder="KEY" />
-                        <InputText v-model="row.value" class="env-val" placeholder="value" />
-                        <button type="button" class="env-remove" title="Remove" @click="removeEnvRow(entries[name]!, i)">
-                          <i class="pi pi-times"></i>
-                        </button>
-                      </div>
-                      <button type="button" class="env-add" @click="addEnvRow(entries[name]!)">
-                        <i class="pi pi-plus"></i> Add variable
-                      </button>
-                    </div>
-                  </div>
-                </template>
+          <!-- Tool (singleton) -->
+          <div class="mw-block">
+            <div class="mw-header" @click="toolExpanded = !toolExpanded">
+              <i class="pi mw-icon pi-wrench"></i>
+              <span class="mw-name">Tool</span>
+              <span class="mw-status" :class="{ on: toolEntry?.enabled }">
+                {{ toolEntry?.enabled ? "Enabled" : "Disabled" }}
+              </span>
+              <div class="mw-toggle" @click.stop>
+                <ToggleSwitch
+                  :model-value="toolEntry?.enabled ?? false"
+                  @update:model-value="
+                    (v) => {
+                      if (toolEntry) toolEntry.enabled = v as boolean;
+                    }
+                  "
+                />
+              </div>
+              <i
+                class="pi mw-chevron"
+                :class="toolExpanded ? 'pi-chevron-up' : 'pi-chevron-down'"
+              ></i>
+            </div>
+            <div v-show="toolExpanded && toolEntry" class="mw-body">
+              <div class="field">
+                <label class="field-label">Working directory</label>
+                <InputText
+                  v-model="toolEntry!.config.workingDirectory as string | undefined"
+                  class="field-input"
+                  placeholder="(inherit server cwd)"
+                />
+              </div>
+            </div>
+          </div>
 
-                <!-- tool -->
-                <template v-else-if="name === 'tool'">
-                  <div class="field">
-                    <label class="field-label">Working directory</label>
-                    <InputText v-model="(entries[name]!.config.workingDirectory as string | undefined)" class="field-input" placeholder="(inherit server cwd)" />
+          <!-- MCP (0..n) -->
+          <div class="mw-block">
+            <div class="mw-header" @click="mcpExpanded = !mcpExpanded">
+              <i class="pi mw-icon pi-bolt"></i>
+              <span class="mw-name">MCP Servers</span>
+              <Button
+                label="Add"
+                icon="pi pi-plus"
+                size="small"
+                severity="secondary"
+                class="mw-add-btn"
+                @click.stop="addMcpEntry"
+              />
+              <i
+                class="pi mw-chevron"
+                :class="mcpExpanded ? 'pi-chevron-up' : 'pi-chevron-down'"
+              ></i>
+            </div>
+            <div v-show="mcpExpanded" class="mw-body">
+              <div v-if="!mcpEntries.length" class="mw-empty-hint">No MCP servers configured.</div>
+              <div
+                v-for="(entry, idx) in mcpEntries"
+                :key="entry.id ?? `new-${idx}`"
+                class="mcp-item"
+              >
+                <div class="mcp-item-header">
+                  <span class="mcp-item-label">{{
+                    entry.config.serverCommand || entry.config.serverUrl || "MCP Server"
+                  }}</span>
+                  <div class="mcp-item-actions">
+                    <ToggleSwitch v-model="entry.enabled" />
+                    <button
+                      type="button"
+                      class="mcp-item-delete"
+                      title="Remove"
+                      @click="removeMcpEntry(idx)"
+                    >
+                      <i class="pi pi-trash"></i>
+                    </button>
                   </div>
-                </template>
-
-                <!-- mcp -->
-                <template v-else-if="name === 'mcp'">
-                  <!-- Transport selector: HTTP or stdio are mutually exclusive. -->
+                </div>
+                <div class="mcp-item-body">
+                  <!-- Transport selector -->
                   <div class="field">
                     <label class="field-label">Transport</label>
                     <SelectButton
-                      :model-value="(entries[name]!.config.transport as string) || 'stdio'"
+                      :model-value="(entry.config.transport as string) || 'stdio'"
                       :options="TRANSPORT_OPTIONS"
                       option-value="value"
                       option-label="label"
-                      @update:model-value="(v) => setField(entries[name]!.config, 'transport', v)"
+                      @update:model-value="(v) => setField(entry.config, 'transport', v)"
                     >
                       <template #option="{ option }">
                         <i class="pi" :class="option.icon"></i>
@@ -397,11 +533,11 @@ function cancel() {
                   </div>
 
                   <!-- HTTP transport -->
-                  <template v-if="((entries[name]!.config.transport as string) || 'stdio') === 'http'">
+                  <template v-if="((entry.config.transport as string) || 'stdio') === 'http'">
                     <div class="field">
                       <label class="field-label">Server URL</label>
                       <InputText
-                        v-model="(entries[name]!.config.serverUrl as string | undefined)"
+                        v-model="entry.config.serverUrl as string | undefined"
                         class="field-input"
                         placeholder="http://localhost:8080/mcp"
                       />
@@ -414,29 +550,37 @@ function cancel() {
                     <div class="field">
                       <label class="field-label">Server command</label>
                       <InputText
-                        v-model="(entries[name]!.config.serverCommand as string | undefined)"
+                        v-model="entry.config.serverCommand as string | undefined"
                         class="field-input"
                         placeholder="npx -y @modelcontextprotocol/server-filesystem"
                       />
-                      <span class="field-hint">Shell command to spawn the MCP server over stdio.</span>
+                      <span class="field-hint"
+                        >Shell command to spawn the MCP server over stdio.</span
+                      >
                     </div>
                     <div class="field">
                       <label class="field-label">Environment variables</label>
                       <div class="env-list">
-                        <div v-for="(row, i) in entries[name]!.envsRows" :key="i" class="env-row">
+                        <div v-for="(row, i) in entry.envsRows" :key="i" class="env-row">
                           <InputText v-model="row.key" class="env-key" placeholder="KEY" />
                           <InputText v-model="row.value" class="env-val" placeholder="value" />
-                          <button type="button" class="env-remove" title="Remove" @click="removeEnvRow(entries[name]!, i)">
+                          <button
+                            type="button"
+                            class="env-remove"
+                            title="Remove"
+                            @click="removeEnvRow(entry, i)"
+                          >
                             <i class="pi pi-times"></i>
                           </button>
                         </div>
-                        <button type="button" class="env-add" @click="addEnvRow(entries[name]!)">
+                        <button type="button" class="env-add" @click="addEnvRow(entry)">
                           <i class="pi pi-plus"></i> Add variable
                         </button>
                       </div>
                     </div>
                   </template>
 
+                  <!-- Tools -->
                   <div class="field">
                     <div class="field-row">
                       <label class="field-label">Tools</label>
@@ -446,27 +590,31 @@ function cancel() {
                         size="small"
                         severity="secondary"
                         :loading="probing"
-                        @click="entries[name] && testConnection(entries[name]!)"
+                        @click="testConnection(entry)"
                       />
                     </div>
-                    <span class="field-hint">Tools are discovered from the server — click "Test connection" to probe. Toggle which ones the model can use.</span>
+                    <span class="field-hint"
+                      >Tools are discovered from the server — click "Test connection" to probe.
+                      Toggle which ones the model can use.</span
+                    >
                     <div v-if="probeError" class="state-error">{{ probeError }}</div>
                     <div class="env-list">
-                      <div v-for="(row, i) in entries[name]!.toolsRows" :key="i" class="tool-row">
+                      <div v-for="(row, i) in entry.toolsRows" :key="i" class="tool-row">
                         <div class="tool-info">
                           <span class="tool-name-display">{{ row.name }}</span>
-                          <span v-if="row.description" class="tool-desc">{{ row.description }}</span>
+                          <span v-if="row.description" class="tool-desc">{{
+                            row.description
+                          }}</span>
                         </div>
                         <ToggleSwitch v-model="row.enabled" />
                       </div>
-                      <div v-if="!entries[name]!.toolsRows.length" class="mw-empty-hint">
+                      <div v-if="!entry.toolsRows.length" class="mw-empty-hint">
                         No tools discovered yet.
                       </div>
                     </div>
                   </div>
-                </template>
-              </template>
-              <div v-else class="mw-empty-hint">Enable to configure.</div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -474,7 +622,13 @@ function cancel() {
         <div v-if="error" class="state-error mt-3">{{ error }}</div>
 
         <div class="actions">
-          <Button label="Cancel" severity="secondary" variant="text" :disabled="saving" @click="cancel" />
+          <Button
+            label="Cancel"
+            severity="secondary"
+            variant="text"
+            :disabled="saving"
+            @click="cancel"
+          />
           <Button label="Save" :disabled="!dirty || saving" :loading="saving" @click="save" />
         </div>
       </template>
@@ -512,8 +666,12 @@ function cancel() {
   font-size: 0.85rem;
   transition: background-color 0.12s ease;
 }
-.nav-item:hover { background: var(--p-surface-100); }
-.app-dark .nav-item:hover { background: var(--p-surface-800); }
+.nav-item:hover {
+  background: var(--p-surface-100);
+}
+.app-dark .nav-item:hover {
+  background: var(--p-surface-800);
+}
 .nav-item.active {
   background: color-mix(in srgb, var(--p-primary-500) 12%, transparent);
   color: var(--p-primary-700);
@@ -522,8 +680,13 @@ function cancel() {
   background: color-mix(in srgb, var(--p-primary-500) 16%, transparent);
   color: var(--p-primary-400);
 }
-.nav-icon { font-size: 0.9rem; opacity: 0.85; }
-.nav-label { font-weight: 500; }
+.nav-icon {
+  font-size: 0.9rem;
+  opacity: 0.85;
+}
+.nav-label {
+  font-weight: 500;
+}
 
 /* Content area */
 .content {
@@ -533,8 +696,15 @@ function cancel() {
   padding: 16px 20px;
   overflow: auto;
 }
-.state-msg { padding: 24px; text-align: center; color: var(--app-text-muted); }
-.state-error { color: #dc2626; font-size: 0.85rem; }
+.state-msg {
+  padding: 24px;
+  text-align: center;
+  color: var(--app-text-muted);
+}
+.state-error {
+  color: #dc2626;
+  font-size: 0.85rem;
+}
 
 .section {
   background: var(--app-surface);
@@ -542,8 +712,16 @@ function cancel() {
   border-radius: 12px;
   padding: 16px 18px;
 }
-.section-title { font-size: 1rem; font-weight: 600; margin: 0 0 2px; }
-.section-subtitle { font-size: 0.82rem; color: var(--app-text-muted); margin: 0 0 12px; }
+.section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+.section-subtitle {
+  font-size: 0.82rem;
+  color: var(--app-text-muted);
+  margin: 0 0 12px;
+}
 
 .field {
   display: flex;
@@ -551,9 +729,18 @@ function cancel() {
   gap: 4px;
   margin-top: 10px;
 }
-.field-label { font-size: 0.78rem; color: var(--app-text-muted); }
-.field-hint { font-size: 0.72rem; color: var(--app-text-muted); opacity: 0.8; }
-.field-input { width: 100%; }
+.field-label {
+  font-size: 0.78rem;
+  color: var(--app-text-muted);
+}
+.field-hint {
+  font-size: 0.72rem;
+  color: var(--app-text-muted);
+  opacity: 0.8;
+}
+.field-input {
+  width: 100%;
+}
 .field-row {
   display: flex;
   align-items: center;
@@ -565,7 +752,10 @@ function cancel() {
   border-top: 1px solid var(--app-border);
   margin-top: 8px;
 }
-.mw-block:first-of-type { border-top: none; margin-top: 0; }
+.mw-block:first-of-type {
+  border-top: none;
+  margin-top: 0;
+}
 .mw-header {
   display: flex;
   align-items: center;
@@ -575,8 +765,12 @@ function cancel() {
   border-radius: 8px;
   transition: background-color 0.12s ease;
 }
-.mw-header:hover { background: var(--p-surface-100); }
-.app-dark .mw-header:hover { background: var(--p-surface-800); }
+.mw-header:hover {
+  background: var(--p-surface-100);
+}
+.app-dark .mw-header:hover {
+  background: var(--p-surface-800);
+}
 .mw-icon {
   font-size: 0.95rem;
   color: var(--p-primary-500);
@@ -594,17 +788,27 @@ function cancel() {
   border-radius: 9999px;
   background: var(--p-surface-100);
 }
-.app-dark .mw-status { background: var(--p-surface-800); }
+.app-dark .mw-status {
+  background: var(--p-surface-800);
+}
 .mw-status.on {
   color: var(--p-primary-700);
   background: color-mix(in srgb, var(--p-primary-500) 14%, transparent);
 }
-.app-dark .mw-status.on { color: var(--p-primary-400); }
-.mw-toggle { display: flex; align-items: center; }
+.app-dark .mw-status.on {
+  color: var(--p-primary-400);
+}
+.mw-toggle {
+  display: flex;
+  align-items: center;
+}
 .mw-chevron {
   margin-left: auto;
   font-size: 0.8rem;
   color: var(--app-text-muted);
+}
+.mw-add-btn {
+  margin-left: 8px;
 }
 .mw-body {
   padding: 4px 4px 8px 28px;
@@ -615,11 +819,86 @@ function cancel() {
   font-style: italic;
 }
 
-.env-list { display: flex; flex-direction: column; gap: 6px; }
-.env-row, .tool-row { display: flex; gap: 6px; align-items: center; }
-.env-key { flex: 0 0 38%; }
-.env-val { flex: 1; }
-.tool-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+/* MCP sub-items */
+.mcp-item {
+  border-top: 1px dashed var(--app-border);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+.mcp-item:first-of-type {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 8px;
+}
+.mcp-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+}
+.mcp-item-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--app-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcp-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mcp-item-delete {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+}
+.mcp-item-delete:hover {
+  background: var(--p-surface-100);
+  color: #dc2626;
+}
+.app-dark .mcp-item-delete:hover {
+  background: var(--p-surface-800);
+}
+.mcp-item-body {
+  padding: 4px 0 8px;
+}
+
+.env-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.env-row,
+.tool-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.env-key {
+  flex: 0 0 38%;
+}
+.env-val {
+  flex: 1;
+}
+.tool-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
 .tool-name-display {
   font-size: 0.82rem;
   font-weight: 500;
@@ -645,8 +924,13 @@ function cancel() {
   align-items: center;
   justify-content: center;
 }
-.env-remove:hover { background: var(--p-surface-100); color: #dc2626; }
-.app-dark .env-remove:hover { background: var(--p-surface-800); }
+.env-remove:hover {
+  background: var(--p-surface-100);
+  color: #dc2626;
+}
+.app-dark .env-remove:hover {
+  background: var(--p-surface-800);
+}
 .env-add {
   align-self: flex-start;
   border: 1px dashed var(--app-border);
@@ -665,10 +949,6 @@ function cancel() {
   border-color: var(--p-primary-500);
   color: var(--p-primary-500);
 }
-.raw-json {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.8rem;
-}
 
 .actions {
   display: flex;
@@ -676,5 +956,7 @@ function cancel() {
   gap: 8px;
   margin-top: 12px;
 }
-.mt-3 { margin-top: 12px; }
+.mt-3 {
+  margin-top: 12px;
+}
 </style>

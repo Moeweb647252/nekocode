@@ -19,9 +19,13 @@ export async function createMiddleware(
 
 export async function updateMiddleware(
   id: number,
-  config: Record<string, unknown>,
+  config?: Record<string, unknown>,
+  enabled?: boolean,
 ): Promise<void> {
-  const resp = await post<null>('/middleware/update', { id, config })
+  const payload: Record<string, unknown> = { id }
+  if (config !== undefined) payload.config = config
+  if (enabled !== undefined) payload.enabled = enabled
+  const resp = await post<null>('/middleware/update', payload)
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to update middleware')
 }
 

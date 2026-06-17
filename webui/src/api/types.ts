@@ -178,4 +178,5 @@ export interface Middleware {
   id: number
   name: string
   config: Record<string, unknown>
+  enabled: boolean
 }
