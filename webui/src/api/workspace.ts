@@ -1,5 +1,5 @@
 import { get, post } from './client'
-import type { Workspace } from './types'
+import type { WorkspaceResponse } from './types'
 
 // ── Workspace CRUD ──
 // A workspace is unique per working directory; create is find-or-create.
@@ -8,8 +8,8 @@ import type { Workspace } from './types'
 export async function createWorkspace(
   workingDirectory: string,
   name?: string,
-): Promise<Workspace> {
-  const resp = await post<Workspace>('/workspace/create', {
+): Promise<WorkspaceResponse> {
+  const resp = await post<WorkspaceResponse>('/workspace/create', {
     workingDirectory,
     name: name ?? null,
   })
@@ -18,15 +18,15 @@ export async function createWorkspace(
 }
 
 /** GET /api/workspace/list — each workspace carries its threads */
-export async function listWorkspaces(): Promise<Workspace[]> {
-  const resp = await get<Workspace[]>('/workspace/list')
+export async function listWorkspaces(): Promise<WorkspaceResponse[]> {
+  const resp = await get<WorkspaceResponse[]>('/workspace/list')
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to list workspaces')
   return resp.data
 }
 
 /** POST /api/workspace/get */
-export async function getWorkspace(id: number): Promise<Workspace> {
-  const resp = await post<Workspace>('/workspace/get', { id })
+export async function getWorkspace(id: number): Promise<WorkspaceResponse> {
+  const resp = await post<WorkspaceResponse>('/workspace/get', { id })
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to get workspace')
   return resp.data
 }

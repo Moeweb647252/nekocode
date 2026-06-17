@@ -9,7 +9,7 @@ pub struct GetThread {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetThreadResponse {
+pub struct ThreadResponse {
     pub id: u64,
     pub title: Option<String>,
     pub working_directory: String,
@@ -43,7 +43,7 @@ pub async fn get_thread(
                 .exec(&mut state.db)
                 .await?
         };
-        ApiResponse::ok(GetThreadResponse {
+        ApiResponse::ok(ThreadResponse {
             id: thread.id,
             title: thread.title,
             working_directory: thread.working_directory,

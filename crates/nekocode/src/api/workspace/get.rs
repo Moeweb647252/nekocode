@@ -19,7 +19,7 @@ pub async fn get_workspace(
             payload.id
         )))?;
     let threads = ws.threads.get().to_owned();
-    ApiResponse::ok(crate::api::workspace::list::WorkspaceDto {
+    ApiResponse::ok(crate::api::workspace::list::WorkspaceResponse {
         id: ws.id,
         working_directory: ws.working_directory,
         name: ws.name,

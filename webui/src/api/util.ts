@@ -37,7 +37,7 @@ export async function getModels(): Promise<string[]> {
   return resp.data
 }
 
-export interface ProbeToolInfo {
+export interface McpProbeToolInfo {
   name: string
   description: string | null
 }
@@ -48,8 +48,8 @@ export async function probeMcp(
   serverCommand: string | null,
   serverUrl: string | null,
   envs: Record<string, string>,
-): Promise<ProbeToolInfo[]> {
-  const resp = await post<{ tools: ProbeToolInfo[] }>('/util/mcp_probe', {
+): Promise<McpProbeToolInfo[]> {
+  const resp = await post<{ tools: McpProbeToolInfo[] }>('/util/mcp_probe', {
     transport,
     serverCommand,
     serverUrl,

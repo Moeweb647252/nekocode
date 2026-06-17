@@ -1,5 +1,5 @@
 import { get, post } from './client'
-import type { GetThreadResponse, Thread } from './types'
+import type { ThreadResponse, Thread } from './types'
 
 // ── Thread CRUD ──
 
@@ -33,8 +33,8 @@ export async function activateThread(id: number): Promise<void> {
 export async function getThread(
   id: number,
   turnsLimit?: number,
-): Promise<GetThreadResponse> {
-  const resp = await post<GetThreadResponse>('/thread/get', {
+): Promise<ThreadResponse> {
+  const resp = await post<ThreadResponse>('/thread/get', {
     id,
     turnsLimit: turnsLimit ?? null,
   })

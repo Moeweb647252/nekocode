@@ -10,7 +10,7 @@ pub struct CreateMiddleware {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreatedMiddleware {
+pub struct MiddlewareResponse {
     pub id: u64,
     pub name: String,
     pub config: serde_json::Value,
@@ -47,7 +47,7 @@ pub async fn create_middleware(
     // Evict the cached agent so the next activation picks up the new middleware.
     state.active_threads.remove(&payload.thread_id);
 
-    ApiResponse::ok(CreatedMiddleware {
+    ApiResponse::ok(MiddlewareResponse {
         id: created.id,
         name: created.name,
         config: created.config.0,

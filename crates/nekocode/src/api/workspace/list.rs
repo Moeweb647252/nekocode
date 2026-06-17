@@ -7,7 +7,7 @@ use crate::api::prelude::*;
 /// threads into the response the sidebar renders.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceDto {
+pub struct WorkspaceResponse {
     pub id: u64,
     pub working_directory: String,
     pub name: Option<String>,
@@ -23,7 +23,7 @@ pub async fn list_workspaces(State(mut state): State<AppState>) -> ApiResult {
         .await?;
     let items = workspaces
         .into_iter()
-        .map(|ws| WorkspaceDto {
+        .map(|ws| WorkspaceResponse {
             threads: ws.threads.get().to_owned(),
             id: ws.id,
             working_directory: ws.working_directory,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AgentEvent, ChatMessage, GetThreadResponse, Thread } from "@/api/types.ts";
+import type { AgentEvent, ChatMessage, ThreadResponse, Thread } from "@/api/types.ts";
 import InputArea from "./InputArea.vue";
 import MessageBox from "./MessageBox.vue";
 import ThreadSettingsDialog from "./ThreadSettingsDialog.vue";
@@ -10,7 +10,7 @@ import { useDialog } from 'primevue';
 const dialog = useDialog();
 
 const selectedThread = inject<Ref<Thread>>("selectedThread");
-const thread = ref<GetThreadResponse | null>(null);
+const thread = ref<ThreadResponse | null>(null);
 const streamingMessages = ref<ChatMessage[]>([]);
 const messages = computed(() => {
   const dbMessages =
@@ -21,7 +21,7 @@ const userInput = ref("");
 const sending = ref(false);
 
 // Model badge for the thread sub-header. Only the Thread summary carries a
-// model field; the loaded GetThreadResponse detail does not.
+// model field; the loaded ThreadResponse detail does not.
 const displayModel = computed(() => selectedThread?.value?.model ?? '')
 
 // Working directory is the project context — the headline of the header.

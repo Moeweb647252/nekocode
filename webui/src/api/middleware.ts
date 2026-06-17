@@ -1,8 +1,8 @@
 import { post } from './client'
-import type { Middleware } from './types'
+import type { MiddlewareResponse } from './types'
 
-export async function listMiddlewares(threadId: number): Promise<Middleware[]> {
-  const resp = await post<Middleware[]>('/middleware/list', { threadId })
+export async function listMiddlewares(threadId: number): Promise<MiddlewareResponse[]> {
+  const resp = await post<MiddlewareResponse[]>('/middleware/list', { threadId })
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to list middlewares')
   return resp.data
 }
@@ -11,8 +11,8 @@ export async function createMiddleware(
   threadId: number,
   name: string,
   config: Record<string, unknown>,
-): Promise<Middleware> {
-  const resp = await post<Middleware>('/middleware/create', { threadId, name, config })
+): Promise<MiddlewareResponse> {
+  const resp = await post<MiddlewareResponse>('/middleware/create', { threadId, name, config })
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to create middleware')
   return resp.data
 }

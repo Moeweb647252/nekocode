@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { createThread, createWorkspace, getDirs, listWorkspaces } from '@/api'
-import type { Thread, Workspace } from '@/api/types'
+import type { Thread, WorkspaceResponse } from '@/api/types'
 import { useDialog } from 'primevue'
 import PickFolder from './PickFolder.vue'
 
@@ -8,7 +8,7 @@ const dialog = useDialog()
 
 // Workspaces are a persisted, server-owned grouping (one per working
 // directory), each carrying its threads. Loaded from /workspace/list.
-const workspaces = ref<Workspace[]>([])
+const workspaces = ref<WorkspaceResponse[]>([])
 const homeDir = ref()
 const selectedThread = inject<Ref<Thread>>('selectedThread')
 
@@ -24,7 +24,7 @@ onMounted(loadWorkspaces)
 
 // Display order: workspaces by most-recent thread activity, threads within a
 // workspace newest-first. The endpoint returns them unsorted.
-const sortedWorkspaces = computed<Workspace[]>(() => {
+const sortedWorkspaces = computed<WorkspaceResponse[]>(() => {
   const list = workspaces.value.map((ws) => ({
     ...ws,
     threads: [...ws.threads].sort((a, b) => ts(b.updatedAt) - ts(a.updatedAt)),
@@ -32,7 +32,7 @@ const sortedWorkspaces = computed<Workspace[]>(() => {
   return list.sort((a, b) => lastActivity(b) - lastActivity(a))
 })
 
-function lastActivity(ws: Workspace): number {
+function lastActivity(ws: WorkspaceResponse): number {
   return ws.threads.reduce((max, t) => Math.max(max, ts(t.updatedAt)), 0)
 }
 
@@ -117,7 +117,7 @@ const newWorkspace = async () => {
 // Per-workspace action: start a new thread inside an existing workspace. The
 // backend find-or-creates the workspace for the directory (already present)
 // and links the new thread to it — no folder picker needed.
-const newThreadInWorkspace = async (ws: Workspace) => {
+const newThreadInWorkspace = async (ws: WorkspaceResponse) => {
   try {
     await createThread(ws.workingDirectory)
     await loadWorkspaces()

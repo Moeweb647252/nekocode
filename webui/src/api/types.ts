@@ -22,7 +22,7 @@ export interface Thread {
 // A workspace owns the threads that share a working directory. `name` is an
 // optional display label (defaults to the directory basename); `threads` is
 // materialized by the /workspace/list and /workspace/get endpoints.
-export interface Workspace {
+export interface WorkspaceResponse {
   id: number
   workingDirectory: string
   name: string | null
@@ -163,7 +163,7 @@ export interface Usage {
 
 // ── Thread detail — serde(rename_all = "camelCase") ──
 
-export interface GetThreadResponse {
+export interface ThreadResponse {
   id: number
   title: string | null
   workingDirectory: string
@@ -175,7 +175,7 @@ export interface GetThreadResponse {
   turns: Turn[]
 }
 
-export interface Middleware {
+export interface MiddlewareResponse {
   id: number
   name: string
   config: Record<string, unknown>

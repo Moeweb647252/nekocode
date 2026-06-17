@@ -12,13 +12,13 @@ pub struct ProbeMcp {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ProbeMcpResponse {
-    pub tools: Vec<ProbeToolInfo>,
+pub struct McpProbeResponse {
+    pub tools: Vec<McpProbeToolInfo>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ProbeToolInfo {
+pub struct McpProbeToolInfo {
     pub name: String,
     pub description: Option<String>,
 }
@@ -55,12 +55,12 @@ pub async fn probe_mcp(
             )));
         }
     };
-    let items: Vec<ProbeToolInfo> = tools
+    let items: Vec<McpProbeToolInfo> = tools
         .into_iter()
-        .map(|t| ProbeToolInfo {
+        .map(|t| McpProbeToolInfo {
             name: t.name,
             description: t.description,
         })
         .collect();
-    ApiResponse::ok(ProbeMcpResponse { tools: items })
+    ApiResponse::ok(McpProbeResponse { tools: items })
 }
