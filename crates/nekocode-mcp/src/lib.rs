@@ -38,7 +38,7 @@ impl McpMiddleware {
                             warn!("MCP http transport configured but no serverUrl");
                             return None;
                         };
-                        McpClient::connect_http(url)
+                        McpClient::connect_http(url, self.config.auth_headers.clone())
                     }
                     crate::config::Transport::Stdio => {
                         let Some(cmd) = self.config.server_command.clone() else {
@@ -75,7 +75,7 @@ pub async fn probe(config: &McpConfig) -> anyhow::Result<Vec<client::McpToolInfo
             let url = config.server_url.clone().ok_or_else(|| {
                 anyhow::anyhow!("no serverUrl configured for http transport")
             })?;
-            McpClient::connect_http(url)
+            McpClient::connect_http(url, config.auth_headers.clone())
         }
         crate::config::Transport::Stdio => {
             let cmd = config.server_command.clone().ok_or_else(|| {

@@ -54,6 +54,7 @@ interface McpEntry {
   config: Record<string, unknown>;
   original: Record<string, unknown>;
   envsRows: { key: string; value: string }[];
+  authHeadersRows: { key: string; value: string }[];
   toolsRows: { name: string; description: string; enabled: boolean }[];
 }
 const mcpEntries = ref<McpEntry[]>([]);
@@ -69,6 +70,10 @@ function splitEnvs(cfg: Record<string, unknown>): { key: string; value: string }
   const envs = (cfg.envs as Record<string, string> | undefined) ?? {};
   return Object.entries(envs).map(([key, value]) => ({ key, value: String(value ?? "") }));
 }
+function splitAuthHeaders(cfg: Record<string, unknown>): { key: string; value: string }[] {
+  const headers = (cfg.authHeaders as Record<string, string> | undefined) ?? {};
+  return Object.entries(headers).map(([key, value]) => ({ key, value: String(value ?? "") }));
+}
 function splitTools(
   cfg: Record<string, unknown>,
 ): { name: string; description: string; enabled: boolean }[] {
@@ -80,7 +85,14 @@ function setField(cfg: Record<string, unknown>, key: string, value: unknown): vo
 }
 
 function defaultMcpConfig(): Record<string, unknown> {
-  return { transport: "stdio", serverCommand: "", serverUrl: "", envs: {}, toolsEnabled: {} };
+  return {
+    transport: "stdio",
+    serverCommand: "",
+    serverUrl: "",
+    envs: {},
+    authHeaders: {},
+    toolsEnabled: {},
+  };
 }
 
 const TRANSPORT_OPTIONS: { label: string; value: string; icon: string }[] = [
@@ -130,6 +142,7 @@ onMounted(async () => {
           config: { ...m.config },
           original: { ...m.config },
           envsRows: splitEnvs(m.config),
+          authHeadersRows: splitAuthHeaders(m.config),
           toolsRows: splitTools(m.config),
         });
       }
@@ -170,6 +183,17 @@ function flushEnvs(entry: {
   }
   setField(entry.config, "envs", envs);
 }
+function flushAuthHeaders(entry: {
+  authHeadersRows: { key: string; value: string }[];
+  config: Record<string, unknown>;
+}) {
+  const headers: Record<string, string> = {};
+  for (const row of entry.authHeadersRows) {
+    const key = row.key.trim();
+    if (key) headers[key] = row.value;
+  }
+  setField(entry.config, "authHeaders", headers);
+}
 function flushTools(entry: McpEntry) {
   const toolsEnabled: Record<string, boolean> = {};
   for (const row of entry.toolsRows) {
@@ -185,17 +209,25 @@ function addEnvRow(entry: { envsRows: { key: string; value: string }[] }) {
 function removeEnvRow(entry: { envsRows: { key: string; value: string }[] }, index: number) {
   entry.envsRows.splice(index, 1);
 }
+function addAuthHeaderRow(entry: { authHeadersRows: { key: string; value: string }[] }) {
+  entry.authHeadersRows.push({ key: "", value: "" });
+}
+function removeAuthHeaderRow(entry: { authHeadersRows: { key: string; value: string }[] }, index: number) {
+  entry.authHeadersRows.splice(index, 1);
+}
 
 async function testConnection(entry: McpEntry) {
   probing.value = true;
   probeError.value = "";
   flushEnvs(entry);
+  flushAuthHeaders(entry);
   const transport = (entry.config.transport as string) || "stdio";
   const serverCommand = (entry.config.serverCommand as string) || null;
   const serverUrl = (entry.config.serverUrl as string) || null;
   const envs = (entry.config.envs as Record<string, string>) ?? {};
+  const authHeaders = (entry.config.authHeaders as Record<string, string>) ?? {};
   try {
-    const tools = await probeMcp(transport, serverCommand, serverUrl, envs);
+    const tools = await probeMcp(transport, serverCommand, serverUrl, envs, authHeaders);
     const prev = new Map(entry.toolsRows.map((r) => [r.name, r.enabled]));
     entry.toolsRows = tools.map((t) => ({
       name: t.name,
@@ -217,6 +249,7 @@ function addMcpEntry() {
     config: defaultMcpConfig(),
     original: defaultMcpConfig(),
     envsRows: [],
+    authHeadersRows: [],
     toolsRows: [],
   });
 }
@@ -266,6 +299,7 @@ async function save() {
     // MCP entries: create new, update changed.
     for (const e of mcpEntries.value) {
       flushEnvs(e);
+      flushAuthHeaders(e);
       flushTools(e);
       if (e.id == null) {
         await createMiddleware(threadId, "mcp", e.config);
@@ -541,6 +575,29 @@ function cancel() {
                         placeholder="http://localhost:8080/mcp"
                       />
                       <span class="field-hint">Streamable HTTP endpoint for the MCP server.</span>
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Auth Headers</label>
+                      <div class="env-list">
+                        <div v-for="(row, i) in entry.authHeadersRows" :key="i" class="env-row">
+                          <InputText v-model="row.key" class="env-key" placeholder="Header-Name" />
+                          <InputText v-model="row.value" class="env-val" placeholder="value" />
+                          <button
+                            type="button"
+                            class="env-remove"
+                            title="Remove"
+                            @click="removeAuthHeaderRow(entry, i)"
+                          >
+                            <i class="pi pi-times"></i>
+                          </button>
+                        </div>
+                        <button type="button" class="env-add" @click="addAuthHeaderRow(entry)">
+                          <i class="pi pi-plus"></i> Add header
+                        </button>
+                      </div>
+                      <span class="field-hint"
+                        >Custom HTTP headers sent with every request (e.g. Authorization, X-API-Key).</span
+                      >
                     </div>
                   </template>
 

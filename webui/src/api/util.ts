@@ -48,12 +48,14 @@ export async function probeMcp(
   serverCommand: string | null,
   serverUrl: string | null,
   envs: Record<string, string>,
+  authHeaders: Record<string, string>,
 ): Promise<McpProbeToolInfo[]> {
   const resp = await post<{ tools: McpProbeToolInfo[] }>('/util/mcp_probe', {
     transport,
     serverCommand,
     serverUrl,
     envs,
+    authHeaders,
   })
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to probe MCP server')
   return resp.data.tools

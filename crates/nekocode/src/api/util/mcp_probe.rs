@@ -8,6 +8,8 @@ pub struct ProbeMcp {
     pub server_url: Option<String>,
     #[serde(default)]
     pub envs: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub auth_headers: std::collections::HashMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -44,6 +46,7 @@ pub async fn probe_mcp(
         server_command: payload.server_command,
         server_url: payload.server_url,
         envs: payload.envs,
+        auth_headers: payload.auth_headers,
         tools_enabled: Default::default(),
     };
     let tools = match nekocode_mcp::probe(&config).await {

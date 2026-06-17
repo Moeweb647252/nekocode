@@ -28,6 +28,10 @@ pub struct McpConfig {
     /// `"http://localhost:8080/mcp"`). http mode only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_url: Option<String>,
+    /// Custom HTTP headers to include in requests (http mode).
+    /// Map of header name → value (e.g., `"Authorization"` → `"Bearer xxx"`).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub auth_headers: HashMap<String, String>,
     /// Environment variables injected into the spawned process (stdio mode).
     #[serde(default)]
     pub envs: HashMap<String, String>,

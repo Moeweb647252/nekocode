@@ -152,15 +152,18 @@ struct HttpTransport {
     /// Optional session id returned by the server via the `Mcp-Session-Id`
     /// header; sent back on subsequent requests to associate them.
     session_id: Mutex<Option<String>>,
+    /// Custom auth headers to include in every request.
+    auth_headers: HashMap<String, String>,
 }
 
 impl HttpTransport {
-    fn new(url: String) -> Self {
+    fn new(url: String, auth_headers: HashMap<String, String>) -> Self {
         Self {
             url,
             client: reqwest::Client::new(),
             next_id: AtomicU64::new(1),
             session_id: Mutex::new(None),
+            auth_headers,
         }
     }
 
@@ -179,6 +182,10 @@ impl HttpTransport {
             .header("Accept", "application/json, text/event-stream")
             .header("Content-Type", "application/json")
             .json(&body);
+        // Add custom auth headers
+        for (key, value) in &self.auth_headers {
+            req = req.header(key, value);
+        }
         {
             let sid = self.session_id.lock().await;
             if let Some(id) = sid.as_ref() {
@@ -230,6 +237,10 @@ impl HttpTransport {
             .header("Accept", "application/json, text/event-stream")
             .header("Content-Type", "application/json")
             .json(&body);
+        // Add custom auth headers
+        for (key, value) in &self.auth_headers {
+            req = req.header(key, value);
+        }
         {
             let sid = self.session_id.lock().await;
             if let Some(id) = sid.as_ref() {
@@ -292,9 +303,9 @@ impl McpClient {
     }
 
     /// Connect to an MCP server over Streamable HTTP.
-    pub fn connect_http(url: String) -> Self {
+    pub fn connect_http(url: String, auth_headers: HashMap<String, String>) -> Self {
         Self {
-            transport: Transport::Http(HttpTransport::new(url)),
+            transport: Transport::Http(HttpTransport::new(url, auth_headers)),
         }
     }
 
