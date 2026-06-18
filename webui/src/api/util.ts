@@ -61,13 +61,16 @@ export async function probeMcp(
   return resp.data.tools
 }
 
-/** Skill entry returned by GET /api/util/skills */
+/** Skill entry returned by GET /api/util/skills. Spec-aligned with
+ *  https://agentskills.io/specification. */
 export interface SkillInfo {
   name: string
-  description: string | null
-  priority: string // "high" | "medium" | "low"
+  description: string // spec: required, 1-1024 chars
   source: string // "builtin" | "user"
   path: string | null
+  license: string | null
+  compatibility: string | null
+  allowedTools: string | null
 }
 
 /** GET /api/util/skills — list all available skills (builtin + user-defined). */

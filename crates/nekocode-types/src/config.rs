@@ -14,13 +14,14 @@ pub struct Config {
 }
 
 /// Global configuration for the skills middleware — where user-defined
-/// SKILL.md files live. Builtin skills are compiled into the binary and do
-/// not need a path.
+/// skill directories live. Builtin skills are compiled into the binary
+/// and need no path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillsDirectoryConfig {
-    /// Directory containing user-defined SKILL.md files.
-    /// Each file becomes a skill; its frontmatter `name` is the unique key.
+    /// Directory containing user-defined skill subdirectories (each
+    /// `<name>/SKILL.md`). Per the agentskills.io spec, single-file
+    /// skills are not supported — only directories.
     #[serde(default = "default_skills_directory")]
     pub directory: String,
 }

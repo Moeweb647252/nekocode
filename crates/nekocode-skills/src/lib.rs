@@ -1,10 +1,29 @@
+//! nekocode-skills — agentskills.io-compliant skills middleware.
+//!
+//! Implements progressive disclosure per
+//! <https://agentskills.io/specification>:
+//!
+//! - **Tier 1 (catalog)**: every enabled skill's `name` and `description`
+//!   are injected into the agent's system prompt at the top of each
+//!   generation.
+//! - **Tier 2 (instructions)**: the SKILL.md body is fetched on demand
+//!   when the model calls the `read_skill` tool.
+//! - **Tier 3 (resources)**: files inside the skill directory
+//!   (`scripts/`, `references/`, `assets/`) are fetched on demand when
+//!   the model calls the `read_skill_file` tool.
+//!
+//! Scripts are not spawned by this middleware — the model invokes them
+//! using whatever shell/tool middleware the user has separately enabled,
+//! which is the canonical agentskills.io approach.
+
 pub mod config;
 mod loader;
 pub mod skill;
+pub mod skill_tool;
 
 pub use config::SkillsConfig;
 pub use loader::SkillLoader;
-pub use skill::{Skill, SkillPriority, SkillSource};
+pub use skill::{Skill, SkillSource};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -13,14 +32,13 @@ use std::sync::Arc;
 use nekocode_core::middleware::Middleware;
 use tokio::sync::OnceCell;
 
-/// Middleware that injects skill prompts into the agent's system prompt.
-///
-/// Skills are loaded lazily on the first `before_generate` call (via
-/// [`SkillLoader`]) from both the compiled-in builtin set and the user's
-/// configured skills directory.
+/// Per-thread skills middleware. Loads skills lazily on first
+/// `before_generate`, then on every generation injects the enabled
+/// skills' catalog into the system prompt and registers the
+/// `read_skill` / `read_skill_file` tools that implement progressive
+/// disclosure.
 pub struct SkillsMiddleware {
     config: Arc<SkillsConfig>,
-    /// Lazily-loaded name → Skill map, shared across calls.
     skills: OnceCell<HashMap<String, Skill>>,
     skills_dir: PathBuf,
 }
@@ -49,51 +67,79 @@ impl Middleware for SkillsMiddleware {
     async fn before_generate(
         &self,
         request: &mut nekocode_core::types::GenerateRequest,
-        _registry: &mut nekocode_types::tool::ToolRegistry,
+        registry: &mut nekocode_types::tool::ToolRegistry,
     ) -> Result<(), anyhow::Error> {
         let skills = self.get_skills().await;
-        let enabled: Vec<&Skill> = self
+
+        // Build the enabled set in one pass so both the catalog text and
+        // the tool registration share an identical view.
+        let enabled: HashMap<String, Skill> = self
             .config
             .enabled
             .iter()
-            .filter_map(|name| skills.get(name))
+            .filter_map(|name| skills.get(name).map(|s| (name.clone(), s.clone())))
             .collect();
 
         if enabled.is_empty() {
             return Ok(());
         }
 
-        // Sort by priority order: High, Medium, Low.
-        let mut sorted = enabled;
-        sorted.sort_by_key(|s| match s.priority {
-            SkillPriority::High => 0,
-            SkillPriority::Medium => 1,
-            SkillPriority::Low => 2,
-        });
+        // Tier-1 catalog: name + description (+ root hint when on disk).
+        let mut entries: Vec<&Skill> = enabled.values().collect();
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        let body: String = entries
+            .iter()
+            .map(|s| {
+                let mut block = format!("- name: {}\n  description: {}", s.name, s.description);
+                if let Some(root) = &s.root {
+                    block.push_str(&format!("\n  root: {}", root.display()));
+                }
+                block
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
-        let mut skill_blocks: Vec<String> = Vec::with_capacity(sorted.len());
-        for s in &sorted {
-            skill_blocks.push(format!("## Skill: {}\n\n{}", s.name, s.prompt));
-        }
-        let skills_prompt = skill_blocks.join("\n\n");
+        let catalog = format!(
+            "The following skills are available. Each entry is a short \
+catalog summary; the full instructions live in the skill's SKILL.md \
+body and bundled files. BEFORE acting on a task that any listed skill \
+is relevant for, call `read_skill` with that skill's name to load its \
+full instructions. Use `read_skill_file` to read referenced files \
+under the skill's root (e.g. references/REFERENCE.md, scripts/extract.py).\n\n{body}"
+        );
 
-        // Prepend to the existing system prompt.
         let existing = request.system_prompt.take().unwrap_or_default();
         request.system_prompt = if existing.is_empty() {
-            Some(skills_prompt)
+            Some(catalog)
         } else {
-            Some(format!("{skills_prompt}\n\n{existing}"))
+            Some(format!("{catalog}\n\n{existing}"))
         };
+
+        // Register the two progressive-disclosure tools. They share an
+        // `Arc<HashMap>` snapshot of just the enabled skills so the model
+        // can't reach un-enabled ones via either tool.
+        let enabled_arc = Arc::new(enabled);
+        registry.insert(
+            "read_skill".into(),
+            Arc::new(skill_tool::ReadSkillTool {
+                skills: enabled_arc.clone(),
+            }),
+        );
+        registry.insert(
+            "read_skill_file".into(),
+            Arc::new(skill_tool::ReadSkillFileTool {
+                skills: enabled_arc,
+            }),
+        );
 
         Ok(())
     }
 }
 
-/// Load all skills (builtin + user-defined) and return them as a flat Vec.
-/// Used by the settings UI's probe/list API.
+/// Load every available skill (builtin + user-defined). Used by the
+/// settings UI to populate the catalog list.
 pub async fn probe_skills(skills_dir: PathBuf) -> Vec<Skill> {
-    let loader = SkillLoader::new(skills_dir);
-    loader
+    SkillLoader::new(skills_dir)
         .load_all()
         .await
         .into_values()

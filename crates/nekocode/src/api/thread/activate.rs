@@ -73,8 +73,7 @@ pub async fn activate_thread(
                     std::path::PathBuf::from(config.skills.directory.clone())
                 };
                 middlewares.push(Box::new(nekocode_skills::SkillsMiddleware::new(
-                    cfg,
-                    skills_dir,
+                    cfg, skills_dir,
                 )));
             }
             _ => {

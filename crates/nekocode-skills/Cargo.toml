@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 nekocode-core.workspace = true
 nekocode-types.workspace = true
-nekocode-entities.workspace = true
 async-trait.workspace = true
 anyhow.workspace = true
 serde.workspace = true

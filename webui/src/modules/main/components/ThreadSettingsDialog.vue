@@ -120,7 +120,10 @@ onMounted(async () => {
     model.value = thread.model ?? "";
     originalModel.value = model.value;
     models.value = modelList;
-    availableSkills.value = skills.map((s) => ({ name: s.name, description: s.description ?? "" }));
+    availableSkills.value = skills.map((s) => ({
+      name: s.name,
+      description: s.description ?? "",
+    }));
 
     // Partition middlewares by name.
     for (const m of mws) {
@@ -604,7 +607,16 @@ function cancel() {
                   placeholder="Select skills to enable"
                   class="field-input"
                   @update:model-value="(v) => setField(skillsEntry!.config, 'enabled', v)"
-                />
+                >
+                  <template #option="{ option }">
+                    <div class="skill-option">
+                      <span class="skill-option-name">{{ option.name }}</span>
+                      <span v-if="option.description" class="skill-option-desc">{{
+                        option.description
+                      }}</span>
+                    </div>
+                  </template>
+                </MultiSelect>
                 <span class="field-hint"
                   >Skills inject behavioral prompts into the system prompt. Built-in and
                   user-defined skills are listed.</span
@@ -1122,5 +1134,25 @@ function cancel() {
 }
 .mt-3 {
   margin-top: 12px;
+}
+
+/* Skill MultiSelect option slot */
+.skill-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+.skill-option-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.skill-option-desc {
+  font-size: 0.72rem;
+  color: var(--app-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

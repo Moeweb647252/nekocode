@@ -1,177 +1,290 @@
-use std::fmt;
+//! Spec-compliant SKILL.md frontmatter + parser.
+//!
+//! Conforms to <https://agentskills.io/specification>. Only the fields
+//! defined by the spec are recognized; private extensions are not parsed.
+
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-/// Priority of a skill prompt — controls injection order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SkillPriority {
-    High,
-    Medium,
-    Low,
-}
-
-impl Default for SkillPriority {
-    fn default() -> Self {
-        SkillPriority::Medium
-    }
-}
-
-impl fmt::Display for SkillPriority {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SkillPriority::High => write!(f, "high"),
-            SkillPriority::Medium => write!(f, "medium"),
-            SkillPriority::Low => write!(f, "low"),
-        }
-    }
-}
-
-/// Where a skill comes from.
+/// Where a skill came from.
 #[derive(Debug, Clone)]
 pub enum SkillSource {
     /// Compiled into the binary.
     Builtin,
-    /// Loaded from a user-provided SKILL.md file.
-    UserDefined { path: PathBuf },
+    /// Loaded from disk; `manifest_path` points at the SKILL.md.
+    UserDefined { manifest_path: PathBuf },
 }
 
-/// A parsed skill definition from a SKILL.md file.
+/// A parsed, spec-compliant skill.
 #[derive(Debug, Clone)]
 pub struct Skill {
     pub name: String,
-    pub description: Option<String>,
-    pub trigger: Option<String>,
-    pub priority: SkillPriority,
-    /// The Markdown body (frontmatter stripped).
-    pub prompt: String,
+    pub description: String,
+    pub license: Option<String>,
+    pub compatibility: Option<String>,
+    pub metadata: HashMap<String, String>,
+    pub allowed_tools: Option<String>,
+    /// Markdown body after the frontmatter. Loaded into the agent's context
+    /// only when the model calls `read_skill`.
+    pub body: String,
     pub source: SkillSource,
+    /// Skill root directory (parent of SKILL.md). `None` for builtins.
+    pub root: Option<PathBuf>,
 }
 
-// ---- YAML frontmatter intermediate (for deserialization) ----
-
-#[derive(Debug, Deserialize)]
-struct SkillFrontmatter {
+#[derive(Debug, Default, Deserialize)]
+struct Frontmatter {
     name: Option<String>,
     description: Option<String>,
-    trigger: Option<String>,
-    priority: Option<SkillPriority>,
+    #[serde(default)]
+    license: Option<String>,
+    #[serde(default)]
+    compatibility: Option<String>,
+    #[serde(default)]
+    metadata: Option<serde_yaml::Mapping>,
+    #[serde(default, rename = "allowed-tools")]
+    allowed_tools: Option<String>,
 }
 
-/// Parse a SKILL.md string into a `Skill`.
+/// Parse a SKILL.md document into a [`Skill`].
 ///
-/// Expected format:
-/// ```markdown
-/// ---
-/// name: skill-name
-/// description: What it does
-/// trigger: keyword|pattern
-/// priority: high
-/// ---
-/// # Skill Name
-/// Prompt body...
-/// ```
-///
-/// Returns `None` if no (or empty) frontmatter block is found.
-pub fn parse_skill_md(content: &str) -> anyhow::Result<Skill> {
-    let trimmed = content.trim();
+/// `expected_name`, when provided, is checked against the parsed `name`
+/// field — the spec requires the frontmatter `name` to match the parent
+/// directory name. Pass `None` for builtin skills.
+pub fn parse_skill_md(content: &str, expected_name: Option<&str>) -> anyhow::Result<Skill> {
+    let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
         anyhow::bail!("SKILL.md must start with a YAML frontmatter block (---)");
     }
     let rest = trimmed.strip_prefix("---").unwrap();
-    let end = rest.find("\n---").ok_or_else(|| {
-        anyhow::anyhow!("SKILL.md frontmatter missing closing ---")
-    })?;
+    let end = rest
+        .find("\n---")
+        .ok_or_else(|| anyhow::anyhow!("SKILL.md frontmatter missing closing ---"))?;
     let yaml_str = &rest[..end];
-    let body = rest[end + 4..].trim();
+    let body = rest[end + 4..].trim_start_matches('\n').to_string();
 
-    let fm: SkillFrontmatter =
-        serde_yaml::from_str(yaml_str).map_err(|e| anyhow::anyhow!("Invalid YAML frontmatter: {e}"))?;
+    let fm: Frontmatter = serde_yaml::from_str(yaml_str)
+        .map_err(|e| anyhow::anyhow!("Invalid YAML frontmatter: {e}"))?;
 
     let name = fm
         .name
         .ok_or_else(|| anyhow::anyhow!("SKILL.md frontmatter missing required field: name"))?;
+    validate_name(&name)?;
+    if let Some(expected) = expected_name {
+        if name != expected {
+            anyhow::bail!(
+                "SKILL.md `name` ({name}) must match parent directory name ({expected})"
+            );
+        }
+    }
+
+    let description = fm
+        .description
+        .ok_or_else(|| anyhow::anyhow!("SKILL.md frontmatter missing required field: description"))?;
+    validate_description(&description)?;
+
+    if let Some(c) = &fm.compatibility {
+        validate_compatibility(c)?;
+    }
+
+    let metadata = fm.metadata.map(coerce_metadata).unwrap_or_default();
 
     Ok(Skill {
         name,
-        description: fm.description,
-        trigger: fm.trigger,
-        priority: fm.priority.unwrap_or_default(),
-        prompt: body.to_string(),
+        description,
+        license: fm.license,
+        compatibility: fm.compatibility,
+        metadata,
+        allowed_tools: fm.allowed_tools,
+        body,
         source: SkillSource::Builtin,
+        root: None,
     })
 }
 
-// Tests ----------------------------------------------------------------------
+fn validate_name(name: &str) -> anyhow::Result<()> {
+    let len = name.chars().count();
+    if len == 0 {
+        anyhow::bail!("`name` must be 1-64 characters (was empty)");
+    }
+    if len > 64 {
+        anyhow::bail!("`name` must be at most 64 characters (was {len})");
+    }
+    if name.starts_with('-') || name.ends_with('-') {
+        anyhow::bail!("`name` must not start or end with a hyphen: {name}");
+    }
+    if name.contains("--") {
+        anyhow::bail!("`name` must not contain consecutive hyphens: {name}");
+    }
+    for c in name.chars() {
+        if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+            anyhow::bail!(
+                "`name` may only contain lowercase letters, digits, and hyphens: {name}"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_description(desc: &str) -> anyhow::Result<()> {
+    if desc.trim().is_empty() {
+        anyhow::bail!("`description` must be non-empty");
+    }
+    let len = desc.chars().count();
+    if len > 1024 {
+        anyhow::bail!("`description` must be at most 1024 characters (was {len})");
+    }
+    Ok(())
+}
+
+fn validate_compatibility(value: &str) -> anyhow::Result<()> {
+    let len = value.chars().count();
+    if len == 0 {
+        anyhow::bail!("`compatibility` must be 1-500 characters when present");
+    }
+    if len > 500 {
+        anyhow::bail!("`compatibility` must be at most 500 characters (was {len})");
+    }
+    Ok(())
+}
+
+/// Coerce a YAML mapping to `HashMap<String, String>`, matching the
+/// canonical agentskills parser which stringifies both keys and values.
+fn coerce_metadata(map: serde_yaml::Mapping) -> HashMap<String, String> {
+    let mut out = HashMap::with_capacity(map.len());
+    for (k, v) in map {
+        out.insert(yaml_to_string(&k), yaml_to_string(&v));
+    }
+    out
+}
+
+fn yaml_to_string(v: &serde_yaml::Value) -> String {
+    match v {
+        serde_yaml::Value::Null => "null".into(),
+        serde_yaml::Value::Bool(b) => b.to_string(),
+        serde_yaml::Value::Number(n) => n.to_string(),
+        serde_yaml::Value::String(s) => s.clone(),
+        other => serde_yaml::to_string(other)
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const VALID_SKILL: &str = "---
-name: test-skill
-description: A test skill
-trigger: test|check
-priority: high
----
-
-# Test Skill
-
-This is the prompt body.";
-
-    #[test]
-    fn parse_valid_skill() {
-        let s = parse_skill_md(VALID_SKILL).unwrap();
-        assert_eq!(s.name, "test-skill");
-        assert_eq!(s.description.unwrap(), "A test skill");
-        assert_eq!(s.trigger.unwrap(), "test|check");
-        assert_eq!(s.priority, SkillPriority::High);
-        assert!(s.prompt.contains("Test Skill"));
-        assert!(s.prompt.contains("prompt body"));
+    fn parse(c: &str) -> anyhow::Result<Skill> {
+        parse_skill_md(c, None)
     }
 
     #[test]
-    fn parse_minimal_skill() {
-        let s = parse_skill_md(
-            "---
-name: minimal
----
+    fn parses_minimal() {
+        let s = parse("---\nname: t\ndescription: x\n---\nbody").unwrap();
+        assert_eq!(s.name, "t");
+        assert_eq!(s.description, "x");
+        assert!(s.metadata.is_empty());
+    }
 
-Just the body.",
+    #[test]
+    fn parses_full() {
+        let s = parse(
+            "---\nname: pdf-processing\ndescription: Extracts PDFs.\nlicense: Apache-2.0\ncompatibility: Requires Python 3.14+\nmetadata:\n  author: example-org\n  version: \"1.0\"\nallowed-tools: Bash(git:*) Read\n---\nbody",
         )
         .unwrap();
-        assert_eq!(s.name, "minimal");
-        assert!(s.description.is_none());
-        assert_eq!(s.priority, SkillPriority::Medium);
+        assert_eq!(s.name, "pdf-processing");
+        assert_eq!(s.license.as_deref(), Some("Apache-2.0"));
+        assert_eq!(s.compatibility.as_deref(), Some("Requires Python 3.14+"));
+        assert_eq!(s.metadata.get("author").map(String::as_str), Some("example-org"));
+        assert_eq!(s.metadata.get("version").map(String::as_str), Some("1.0"));
+        assert_eq!(s.allowed_tools.as_deref(), Some("Bash(git:*) Read"));
     }
 
     #[test]
-    fn parse_requires_name() {
-        let err = parse_skill_md(
-            "---
-description: no name here
----
+    fn rejects_missing_description() {
+        let e = parse("---\nname: t\n---\nbody").unwrap_err().to_string();
+        assert!(e.contains("description"));
+    }
 
-Body",
+    #[test]
+    fn rejects_empty_description() {
+        let e = parse("---\nname: t\ndescription: '   '\n---\nbody")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("description"));
+    }
+
+    #[test]
+    fn rejects_long_description() {
+        let long = "a".repeat(1025);
+        let src = format!("---\nname: t\ndescription: {long}\n---\nbody");
+        let e = parse(&src).unwrap_err().to_string();
+        assert!(e.contains("1024"));
+    }
+
+    #[test]
+    fn rejects_uppercase_name() {
+        let e = parse("---\nname: PDF\ndescription: x\n---\nbody")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("lowercase"));
+    }
+
+    #[test]
+    fn rejects_leading_hyphen_name() {
+        let e = parse("---\nname: -foo\ndescription: x\n---\nbody")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("hyphen"));
+    }
+
+    #[test]
+    fn rejects_consecutive_hyphens() {
+        let e = parse("---\nname: foo--bar\ndescription: x\n---\nbody")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("consecutive"));
+    }
+
+    #[test]
+    fn rejects_long_name() {
+        let long = "a".repeat(65);
+        let src = format!("---\nname: {long}\ndescription: x\n---\nbody");
+        let e = parse(&src).unwrap_err().to_string();
+        assert!(e.contains("64"));
+    }
+
+    #[test]
+    fn rejects_long_compatibility() {
+        let long = "a".repeat(501);
+        let src = format!("---\nname: t\ndescription: x\ncompatibility: {long}\n---\nbody");
+        let e = parse(&src).unwrap_err().to_string();
+        assert!(e.contains("500"));
+    }
+
+    #[test]
+    fn enforces_name_matches_dir() {
+        let e = parse_skill_md(
+            "---\nname: foo\ndescription: x\n---\nbody",
+            Some("bar"),
         )
-        .unwrap_err();
-        assert!(err.to_string().contains("name"));
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("parent directory"));
     }
 
     #[test]
     fn rejects_no_frontmatter() {
-        let err = parse_skill_md("Just plain text").unwrap_err();
-        assert!(err.to_string().contains("frontmatter"));
+        let e = parse("hello").unwrap_err().to_string();
+        assert!(e.contains("frontmatter"));
     }
 
     #[test]
     fn rejects_unclosed_frontmatter() {
-        let err = parse_skill_md(
-            "---
-name: oops",
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("closing ---"));
+        let e = parse("---\nname: t").unwrap_err().to_string();
+        assert!(e.contains("closing"));
     }
 }
