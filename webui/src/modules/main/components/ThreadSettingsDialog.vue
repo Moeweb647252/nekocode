@@ -46,7 +46,7 @@ const skillsEntry = ref<SingletonEntry | null>(null);
 const shellExpanded = ref(false);
 const toolExpanded = ref(false);
 const skillsExpanded = ref(false);
-const mcpExpanded = ref(true);
+const mcpExpanded = ref(false);
 
 // Available skills loaded once from GET /util/skills.
 const availableSkills = ref<{ name: string; description: string }[]>([]);
@@ -260,7 +260,10 @@ function removeEnvRow(entry: { envsRows: { key: string; value: string }[] }, ind
 function addAuthHeaderRow(entry: { authHeadersRows: { key: string; value: string }[] }) {
   entry.authHeadersRows.push({ key: "", value: "" });
 }
-function removeAuthHeaderRow(entry: { authHeadersRows: { key: string; value: string }[] }, index: number) {
+function removeAuthHeaderRow(
+  entry: { authHeadersRows: { key: string; value: string }[] },
+  index: number,
+) {
   entry.authHeadersRows.splice(index, 1);
 }
 
@@ -603,8 +606,8 @@ function cancel() {
                   @update:model-value="(v) => setField(skillsEntry!.config, 'enabled', v)"
                 />
                 <span class="field-hint"
-                  >Skills inject behavioral prompts into the system prompt. Built-in and user-defined
-                  skills are listed.</span
+                  >Skills inject behavioral prompts into the system prompt. Built-in and
+                  user-defined skills are listed.</span
                 >
               </div>
             </div>
@@ -700,7 +703,8 @@ function cancel() {
                         </button>
                       </div>
                       <span class="field-hint"
-                        >Custom HTTP headers sent with every request (e.g. Authorization, X-API-Key).</span
+                        >Custom HTTP headers sent with every request (e.g. Authorization,
+                        X-API-Key).</span
                       >
                     </div>
                   </template>
