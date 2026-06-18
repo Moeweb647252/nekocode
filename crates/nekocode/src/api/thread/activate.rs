@@ -66,6 +66,17 @@ pub async fn activate_thread(
                 let cfg = nekocode_mcp::config::McpConfig::from_value(&i.config);
                 middlewares.push(Box::new(nekocode_mcp::McpMiddleware::new(cfg)));
             }
+            "skills" => {
+                let cfg = nekocode_skills::SkillsConfig::from_value(&i.config);
+                let skills_dir = {
+                    let config = state.config.read().await;
+                    std::path::PathBuf::from(config.skills.directory.clone())
+                };
+                middlewares.push(Box::new(nekocode_skills::SkillsMiddleware::new(
+                    cfg,
+                    skills_dir,
+                )));
+            }
             _ => {
                 tracing::warn!("Unknown middleware: {}", i.name);
             }

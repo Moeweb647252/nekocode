@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -7,6 +9,37 @@ pub struct Config {
     pub default_model: String,
     pub server: ServerConfig,
     pub app: AppConfig,
+    #[serde(default)]
+    pub skills: SkillsDirectoryConfig,
+}
+
+/// Global configuration for the skills middleware — where user-defined
+/// SKILL.md files live. Builtin skills are compiled into the binary and do
+/// not need a path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsDirectoryConfig {
+    /// Directory containing user-defined SKILL.md files.
+    /// Each file becomes a skill; its frontmatter `name` is the unique key.
+    #[serde(default = "default_skills_directory")]
+    pub directory: String,
+}
+
+impl Default for SkillsDirectoryConfig {
+    fn default() -> Self {
+        Self {
+            directory: default_skills_directory(),
+        }
+    }
+}
+
+fn default_skills_directory() -> String {
+    dirs::config_dir()
+        .map(|p| p.join("nekocode"))
+        .unwrap_or(PathBuf::new())
+        .join("skills")
+        .display()
+        .to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

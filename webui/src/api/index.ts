@@ -17,6 +17,6 @@ export {
   updateWorkspace,
   deleteWorkspace,
 } from './workspace'
-export { getDirs, listDir, getModels, probeMcp } from './util'
-export type { DirsResponse, ListDirEntry, McpProbeToolInfo } from './util'
+export { getDirs, listDir, getModels, probeMcp, listSkills } from './util'
+export type { DirsResponse, ListDirEntry, McpProbeToolInfo, SkillInfo } from './util'
 export { createMiddleware, listMiddlewares, updateMiddleware, deleteMiddleware } from './middleware'

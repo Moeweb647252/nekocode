@@ -60,3 +60,19 @@ export async function probeMcp(
   if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to probe MCP server')
   return resp.data.tools
 }
+
+/** Skill entry returned by GET /api/util/skills */
+export interface SkillInfo {
+  name: string
+  description: string | null
+  priority: string // "high" | "medium" | "low"
+  source: string // "builtin" | "user"
+  path: string | null
+}
+
+/** GET /api/util/skills — list all available skills (builtin + user-defined). */
+export async function listSkills(): Promise<SkillInfo[]> {
+  const resp = await get<SkillInfo[]>('/util/skills')
+  if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to list skills')
+  return resp.data
+}

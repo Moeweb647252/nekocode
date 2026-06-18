@@ -7,6 +7,7 @@ import {
   getModels,
   getThread,
   listMiddlewares,
+  listSkills,
   probeMcp,
   updateMiddleware,
   updateThread,
@@ -41,9 +42,14 @@ interface SingletonEntry {
 
 const shellEntry = ref<SingletonEntry | null>(null);
 const toolEntry = ref<SingletonEntry | null>(null);
+const skillsEntry = ref<SingletonEntry | null>(null);
 const shellExpanded = ref(false);
 const toolExpanded = ref(false);
+const skillsExpanded = ref(false);
 const mcpExpanded = ref(true);
+
+// Available skills loaded once from GET /util/skills.
+const availableSkills = ref<{ name: string; description: string }[]>([]);
 
 // MCP middlewares: zero-or-many. Each row has its own enabled toggle.
 // Deleting a row removes it; adding creates a new one.
@@ -103,16 +109,18 @@ const TRANSPORT_OPTIONS: { label: string; value: string; icon: string }[] = [
 onMounted(async () => {
   if (threadId == null) return;
   try {
-    const [thread, mws, modelList] = await Promise.all([
+    const [thread, mws, modelList, skills] = await Promise.all([
       getThread(threadId),
       listMiddlewares(threadId),
       getModels(),
+      listSkills(),
     ]);
     title.value = thread.title ?? "";
     originalTitle.value = title.value;
     model.value = thread.model ?? "";
     originalModel.value = model.value;
     models.value = modelList;
+    availableSkills.value = skills.map((s) => ({ name: s.name, description: s.description ?? "" }));
 
     // Partition middlewares by name.
     for (const m of mws) {
@@ -134,6 +142,15 @@ onMounted(async () => {
           original: { ...m.config },
           envsRows: [],
         };
+      } else if (m.name === "skills" && !skillsEntry.value) {
+        skillsEntry.value = {
+          id: m.id,
+          enabled: m.enabled,
+          originalEnabled: m.enabled,
+          config: { ...m.config },
+          original: { ...m.config },
+          envsRows: [],
+        };
       } else if (m.name === "mcp") {
         mcpEntries.value.push({
           id: m.id,
@@ -146,6 +163,36 @@ onMounted(async () => {
           toolsRows: splitTools(m.config),
         });
       }
+    }
+
+    // Skills isn't seeded on thread creation like Shell/Tool, so default it so
+    // the panel always renders (the accordion body binds skillsEntry!.config,
+    // which would throw on null). Toggling/enabling marks it dirty → save
+    // creates the row.
+    if (!skillsEntry.value) {
+      skillsEntry.value = {
+        id: null,
+        enabled: false,
+        originalEnabled: false,
+        config: { enabled: [] },
+        original: { enabled: [] },
+        envsRows: [],
+      };
+    }
+
+    // Skills is a singleton but not auto-seeded on thread creation (unlike
+    // shell/tool). Provide an in-memory default so the panel is always shown
+    // and its template bindings stay null-safe. Persisted on first save.
+    if (!skillsEntry.value) {
+      const defaultCfg = { enabled: [] };
+      skillsEntry.value = {
+        id: null,
+        enabled: false,
+        originalEnabled: false,
+        config: { ...defaultCfg },
+        original: { ...defaultCfg },
+        envsRows: [],
+      };
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -164,6 +211,7 @@ function mcpChanged(e: McpEntry): boolean {
 const middlewareChanged = computed(() => {
   if (shellEntry.value && singletonChanged(shellEntry.value)) return true;
   if (toolEntry.value && singletonChanged(toolEntry.value)) return true;
+  if (skillsEntry.value && singletonChanged(skillsEntry.value)) return true;
   for (const e of mcpEntries.value) {
     if (e.id == null || mcpChanged(e)) return true;
   }
@@ -289,6 +337,18 @@ async function save() {
       const e = toolEntry.value;
       if (e.id == null) {
         await createMiddleware(threadId, "tool", e.config);
+        needsReactivation = true;
+      } else if (singletonChanged(e)) {
+        await updateMiddleware(e.id, e.config, e.enabled);
+        needsReactivation = true;
+      }
+    }
+
+    // Skills singleton.
+    if (skillsEntry.value) {
+      const e = skillsEntry.value;
+      if (e.id == null) {
+        await createMiddleware(threadId, "skills", e.config);
         needsReactivation = true;
       } else if (singletonChanged(e)) {
         await updateMiddleware(e.id, e.config, e.enabled);
@@ -502,6 +562,50 @@ function cancel() {
                   class="field-input"
                   placeholder="(inherit server cwd)"
                 />
+              </div>
+            </div>
+          </div>
+
+          <!-- Skills (singleton) -->
+          <div class="mw-block">
+            <div class="mw-header" @click="skillsExpanded = !skillsExpanded">
+              <i class="pi mw-icon pi-star"></i>
+              <span class="mw-name">Skills</span>
+              <span class="mw-status" :class="{ on: skillsEntry?.enabled }">
+                {{ skillsEntry?.enabled ? "Enabled" : "Disabled" }}
+              </span>
+              <div class="mw-toggle" @click.stop>
+                <ToggleSwitch
+                  :model-value="skillsEntry?.enabled ?? false"
+                  @update:model-value="
+                    (v) => {
+                      if (skillsEntry) skillsEntry.enabled = v as boolean;
+                    }
+                  "
+                />
+              </div>
+              <i
+                class="pi mw-chevron"
+                :class="skillsExpanded ? 'pi-chevron-up' : 'pi-chevron-down'"
+              ></i>
+            </div>
+            <div v-show="skillsExpanded && skillsEntry" class="mw-body">
+              <div class="field">
+                <label class="field-label">Enabled skills</label>
+                <MultiSelect
+                  :model-value="(skillsEntry!.config.enabled as string[]) || []"
+                  :options="availableSkills"
+                  option-label="name"
+                  option-value="name"
+                  display="chip"
+                  placeholder="Select skills to enable"
+                  class="field-input"
+                  @update:model-value="(v) => setField(skillsEntry!.config, 'enabled', v)"
+                />
+                <span class="field-hint"
+                  >Skills inject behavioral prompts into the system prompt. Built-in and user-defined
+                  skills are listed.</span
+                >
               </div>
             </div>
           </div>

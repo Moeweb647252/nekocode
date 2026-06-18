@@ -36,3 +36,4 @@ nekocode-types = { path = "crates/nekocode-types" }
 nekocode-shell = { path = "crates/nekocode-shell" }
 nekocode-tool = { path = "crates/nekocode-tool" }
 nekocode-mcp = { path = "crates/nekocode-mcp" }
+nekocode-skills = { path = "crates/nekocode-skills" }
