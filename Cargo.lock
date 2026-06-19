@@ -2342,12 +2342,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nekocode-compact"
+version = "0.1.0"
+
+[[package]]
 name = "nekocode-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "dashmap",
+ "futures-util",
  "jiff",
  "nekocode-entities",
  "nekocode-types",

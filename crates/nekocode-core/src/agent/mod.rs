@@ -1,4 +1,5 @@
 pub mod error;
+pub mod subagent;
 use std::{any::Any, sync::Arc};
 
 use anyhow::anyhow;
