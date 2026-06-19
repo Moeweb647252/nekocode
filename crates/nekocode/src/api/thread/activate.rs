@@ -76,6 +76,25 @@ pub async fn activate_thread(
                     cfg, skills_dir,
                 )));
             }
+            "subthread" => {
+                let cfg = nekocode_subthread::SubthreadConfig::from_value(&i.config);
+                let activator = std::sync::Arc::new(
+                    crate::api::thread::subthread_activator::ApiThreadActivator {
+                        db: state.db.clone(),
+                        config: state.config.clone(),
+                        active_threads: state.active_threads.clone(),
+                        generate_states: state.generate_states.clone(),
+                    },
+                );
+                middlewares.push(Box::new(nekocode_subthread::SubthreadMiddleware::new(
+                    extensions.clone(),
+                    state.db.clone(),
+                    thread_id,
+                    thread.working_directory.clone(),
+                    cfg,
+                    activator,
+                )));
+            }
             _ => {
                 tracing::warn!("Unknown middleware: {}", i.name);
             }

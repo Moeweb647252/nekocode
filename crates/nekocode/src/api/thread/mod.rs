@@ -7,6 +7,7 @@ pub mod create;
 pub mod delete;
 pub mod get;
 pub mod list;
+pub mod subthread_activator;
 pub mod update;
 
 pub fn router() -> axum::Router<AppState> {

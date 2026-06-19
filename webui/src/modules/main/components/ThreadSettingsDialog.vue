@@ -43,9 +43,11 @@ interface SingletonEntry {
 const shellEntry = ref<SingletonEntry | null>(null);
 const toolEntry = ref<SingletonEntry | null>(null);
 const skillsEntry = ref<SingletonEntry | null>(null);
+const subthreadEntry = ref<SingletonEntry | null>(null);
 const shellExpanded = ref(false);
 const toolExpanded = ref(false);
 const skillsExpanded = ref(false);
+const subthreadExpanded = ref(false);
 const mcpExpanded = ref(false);
 
 // Available skills loaded once from GET /util/skills.
@@ -154,6 +156,15 @@ onMounted(async () => {
           original: { ...m.config },
           envsRows: [],
         };
+      } else if (m.name === "subthread" && !subthreadEntry.value) {
+        subthreadEntry.value = {
+          id: m.id,
+          enabled: m.enabled,
+          originalEnabled: m.enabled,
+          config: { ...m.config },
+          original: { ...m.config },
+          envsRows: [],
+        };
       } else if (m.name === "mcp") {
         mcpEntries.value.push({
           id: m.id,
@@ -168,27 +179,25 @@ onMounted(async () => {
       }
     }
 
-    // Skills isn't seeded on thread creation like Shell/Tool, so default it so
-    // the panel always renders (the accordion body binds skillsEntry!.config,
-    // which would throw on null). Toggling/enabling marks it dirty → save
-    // creates the row.
+    // Provide an in-memory default so the panel is always shown and its template
+    // bindings stay null-safe. Persisted on first save.
     if (!skillsEntry.value) {
+      const defaultCfg = { enabled: [] };
       skillsEntry.value = {
         id: null,
         enabled: false,
         originalEnabled: false,
-        config: { enabled: [] },
-        original: { enabled: [] },
+        config: { ...defaultCfg },
+        original: { ...defaultCfg },
         envsRows: [],
       };
     }
 
-    // Skills is a singleton but not auto-seeded on thread creation (unlike
-    // shell/tool). Provide an in-memory default so the panel is always shown
-    // and its template bindings stay null-safe. Persisted on first save.
-    if (!skillsEntry.value) {
-      const defaultCfg = { enabled: [] };
-      skillsEntry.value = {
+    // Subthread is a singleton but not auto-seeded on thread creation. Provide an
+    // in-memory default so the panel is always shown. Persisted on first save.
+    if (!subthreadEntry.value) {
+      const defaultCfg = { allowSubthread: false };
+      subthreadEntry.value = {
         id: null,
         enabled: false,
         originalEnabled: false,
@@ -215,6 +224,7 @@ const middlewareChanged = computed(() => {
   if (shellEntry.value && singletonChanged(shellEntry.value)) return true;
   if (toolEntry.value && singletonChanged(toolEntry.value)) return true;
   if (skillsEntry.value && singletonChanged(skillsEntry.value)) return true;
+  if (subthreadEntry.value && singletonChanged(subthreadEntry.value)) return true;
   for (const e of mcpEntries.value) {
     if (e.id == null || mcpChanged(e)) return true;
   }
@@ -355,6 +365,18 @@ async function save() {
       const e = skillsEntry.value;
       if (e.id == null) {
         await createMiddleware(threadId, "skills", e.config);
+        needsReactivation = true;
+      } else if (singletonChanged(e)) {
+        await updateMiddleware(e.id, e.config, e.enabled);
+        needsReactivation = true;
+      }
+    }
+
+    // Subthread singleton.
+    if (subthreadEntry.value) {
+      const e = subthreadEntry.value;
+      if (e.id == null) {
+        await createMiddleware(threadId, "subthread", e.config);
         needsReactivation = true;
       } else if (singletonChanged(e)) {
         await updateMiddleware(e.id, e.config, e.enabled);
@@ -620,6 +642,47 @@ function cancel() {
                 <span class="field-hint"
                   >Skills inject behavioral prompts into the system prompt. Built-in and
                   user-defined skills are listed.</span
+                >
+              </div>
+            </div>
+          </div>
+
+          <!-- Subthread (singleton) -->
+          <div class="mw-block">
+            <div class="mw-header" @click="subthreadExpanded = !subthreadExpanded">
+              <i class="pi mw-icon pi-sitemap"></i>
+              <span class="mw-name">Subthread</span>
+              <span class="mw-status" :class="{ on: subthreadEntry?.enabled }">
+                {{ subthreadEntry?.enabled ? "Enabled" : "Disabled" }}
+              </span>
+              <div class="mw-toggle" @click.stop>
+                <ToggleSwitch
+                  :model-value="subthreadEntry?.enabled ?? false"
+                  @update:model-value="
+                    (v) => {
+                      if (subthreadEntry) subthreadEntry.enabled = v as boolean;
+                    }
+                  "
+                />
+              </div>
+              <i
+                class="pi mw-chevron"
+                :class="subthreadExpanded ? 'pi-chevron-up' : 'pi-chevron-down'"
+              ></i>
+            </div>
+            <div v-show="subthreadExpanded && subthreadEntry" class="mw-body">
+              <div class="field">
+                <label class="field-label">Allow subthreads</label>
+                <ToggleSwitch
+                  :model-value="(subthreadEntry!.config.allowSubthread as boolean) ?? false"
+                  @update:model-value="
+                    (v) => setField(subthreadEntry!.config, 'allowSubthread', v as boolean)
+                  "
+                />
+                <span class="field-hint"
+                  >When enabled, spawned subthreads will also receive the subthread middleware,
+                  allowing them to spawn their own subthreads (recursive fan-out). Disable to
+                  limit the thread tree to a single level of nesting.</span
                 >
               </div>
             </div>
