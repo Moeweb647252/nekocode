@@ -3,6 +3,7 @@ import { createThread, createWorkspace, getDirs, listWorkspaces } from '@/api'
 import type { Thread, WorkspaceResponse } from '@/api/types'
 import { useDialog } from 'primevue'
 import PickFolder from './PickFolder.vue'
+import ThreadTreeNode from './ThreadTreeNode.vue'
 
 const dialog = useDialog()
 
@@ -22,14 +23,45 @@ async function loadWorkspaces() {
 
 onMounted(loadWorkspaces)
 
-// Display order: workspaces by most-recent thread activity, threads within a
-// workspace newest-first. The endpoint returns them unsorted.
-const sortedWorkspaces = computed<WorkspaceResponse[]>(() => {
-  const list = workspaces.value.map((ws) => ({
-    ...ws,
-    threads: [...ws.threads].sort((a, b) => ts(b.updatedAt) - ts(a.updatedAt)),
-  }))
-  return list.sort((a, b) => lastActivity(b) - lastActivity(a))
+/**
+ * Per-workspace tree view: top-level threads (ownById == null) plus an index
+ * mapping each parent thread id to its subthreads. Built once per render from
+ * the flat `ws.threads` array the backend returns — subthreads are already in
+ * the payload (they share the workspace because their working_directory lives
+ * under the parent's), so no extra request is needed.
+ */
+interface WorkspaceTree {
+  ws: WorkspaceResponse
+  topLevelThreads: Thread[]
+  childrenByParent: Map<number, Thread[]>
+}
+
+function buildTree(ws: WorkspaceResponse): WorkspaceTree {
+  const topLevelThreads: Thread[] = []
+  const childrenByParent = new Map<number, Thread[]>()
+  for (const t of ws.threads) {
+    if (t.ownById == null) {
+      topLevelThreads.push(t)
+    } else {
+      const list = childrenByParent.get(t.ownById)
+      if (list) list.push(t)
+      else childrenByParent.set(t.ownById, [t])
+    }
+  }
+  // Top-level threads: newest activity first (mirrors the old sort).
+  topLevelThreads.sort((a, b) => ts(b.updatedAt) - ts(a.updatedAt))
+  // Subthreads: spawn order (oldest first) so the tree reads top-to-bottom.
+  for (const list of childrenByParent.values()) {
+    list.sort((a, b) => ts(a.createdAt) - ts(b.createdAt))
+  }
+  return { ws, topLevelThreads, childrenByParent }
+}
+
+// Display order: workspaces by most-recent thread activity. The endpoint
+// returns them unsorted.
+const sortedWorkspaces = computed<WorkspaceTree[]>(() => {
+  const trees = workspaces.value.map(buildTree)
+  return trees.sort((a, b) => lastActivity(b.ws) - lastActivity(a.ws))
 })
 
 function lastActivity(ws: WorkspaceResponse): number {
@@ -41,18 +73,50 @@ const selectedId = computed(() => selectedThread?.value?.id)
 
 // Collapsed state keyed by workspace id. Absent = expanded (default).
 const collapsed = reactive<Record<number, boolean>>({})
+// Per-thread collapse state (top-level threads AND subthreads). Absent =
+// expanded, matching the workspace convention.
+const threadCollapsed = reactive<Record<number, boolean>>({})
+
 function toggleWorkspace(id: number) {
   collapsed[id] = !collapsed[id]
 }
 function isExpanded(id: number) {
   return !collapsed[id]
 }
+function toggleThread(id: number) {
+  threadCollapsed[id] = !threadCollapsed[id]
+}
+
+/**
+ * Thread lookup by id across all workspaces, used to walk the `ownById`
+ * ancestor chain when expanding a selected subthread's parents.
+ */
+const threadById = computed<Map<number, Thread>>(() => {
+  const map = new Map<number, Thread>()
+  for (const ws of workspaces.value) {
+    for (const t of ws.threads) map.set(t.id, t)
+  }
+  return map
+})
+
 function selectThread(t: Thread) {
   if (!selectedThread) return
   selectedThread.value = t
-  // Keep the selected thread visible: never leave its workspace collapsed.
+  // Keep the selected thread visible: never leave its workspace collapsed…
   if (t.workspaceId != null) collapsed[t.workspaceId] = false
+  // …nor any of its ancestor threads. Walk ownById upward, expanding each.
+  let cursor: Thread | undefined = t
+  while (cursor && cursor.ownById != null) {
+    threadCollapsed[cursor.ownById] = false
+    cursor = threadById.value.get(cursor.ownById)
+  }
 }
+
+// Expose the shared tree state to ThreadTreeNode via inject keys. The node
+// component reads these instead of receiving them as props at every depth.
+provide('threadCollapsed', threadCollapsed)
+provide('selectThread', selectThread)
+provide('toggleThread', toggleThread)
 
 function ts(iso: string): number {
   const n = new Date(iso).getTime()
@@ -64,21 +128,6 @@ function ts(iso: string): number {
 function dirBasename(path: string): string {
   const parts = (path ?? '').replace(/\\/g, '/').split('/').filter(Boolean)
   return parts[parts.length - 1] || path || 'untitled'
-}
-
-// Relative-ish timestamp (e.g. "2h ago"). Best-effort; falls back to date.
-function timeAgo(iso: string): string {
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return ''
-  const diff = Date.now() - then
-  const min = Math.round(diff / 60000)
-  if (min < 1) return 'just now'
-  if (min < 60) return `${min}m ago`
-  const hr = Math.round(min / 60)
-  if (hr < 24) return `${hr}h ago`
-  const day = Math.round(hr / 24)
-  if (day < 7) return `${day}d ago`
-  return new Date(iso).toLocaleDateString()
 }
 
 // Top-level action: pick a directory and create (find-or-create) a workspace
@@ -142,45 +191,40 @@ const newThreadInWorkspace = async (ws: WorkspaceResponse) => {
 
     <!-- Workspace list -->
     <div class="overflow-auto pb-2">
-      <div v-for="ws in sortedWorkspaces" :key="ws.id" class="workspace">
+      <div v-for="tree in sortedWorkspaces" :key="tree.ws.id" class="workspace">
         <div class="ws-row">
           <button
             type="button"
             class="ws-header"
-            :title="ws.workingDirectory"
-            @click="toggleWorkspace(ws.id)"
+            :title="tree.ws.workingDirectory"
+            @click="toggleWorkspace(tree.ws.id)"
           >
             <i
               class="pi ws-chevron"
-              :class="isExpanded(ws.id) ? 'pi-chevron-down' : 'pi-chevron-right'"
+              :class="isExpanded(tree.ws.id) ? 'pi-chevron-down' : 'pi-chevron-right'"
             />
             <i class="pi pi-folder ws-icon" />
-            <span class="ws-name">{{ ws.name || dirBasename(ws.workingDirectory) }}</span>
-            <span class="ws-count">{{ ws.threads.length }}</span>
+            <span class="ws-name">{{ tree.ws.name || dirBasename(tree.ws.workingDirectory) }}</span>
+            <span class="ws-count">{{ tree.ws.threads.length }}</span>
           </button>
           <button
             type="button"
             class="ws-add"
             title="New thread in this workspace"
-            @click="newThreadInWorkspace(ws)"
+            @click="newThreadInWorkspace(tree.ws)"
           >
             <i class="pi pi-plus" />
           </button>
         </div>
 
-        <div v-show="isExpanded(ws.id)" class="ws-threads">
-          <button
-            v-for="t in ws.threads"
+        <div v-show="isExpanded(tree.ws.id)" class="ws-threads">
+          <ThreadTreeNode
+            v-for="t in tree.topLevelThreads"
             :key="t.id"
-            type="button"
-            class="thread-row"
-            :class="{ active: selectedId === t.id }"
-            :title="t.title || 'Untitled'"
-            @click="selectThread(t)"
-          >
-            <span class="thread-title">{{ t.title || 'Untitled' }}</span>
-            <span v-if="timeAgo(t.updatedAt)" class="thread-time">{{ timeAgo(t.updatedAt) }}</span>
-          </button>
+            :thread="t"
+            :children-by-parent="tree.childrenByParent"
+            :depth="0"
+          />
         </div>
       </div>
 
@@ -276,50 +320,9 @@ const newThreadInWorkspace = async (ws: WorkspaceResponse) => {
   color: var(--app-text-muted);
 }
 
-/* Thread sub-rows, indented under their workspace header. */
+/* Thread sub-tree container, indented under the workspace header. */
 .ws-threads {
   display: flex;
   flex-direction: column;
-}
-.thread-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  margin: 1px 4px;
-  padding: 6px 10px 6px 30px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--app-text);
-  font-size: 0.85rem;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 0.12s ease;
-}
-.thread-row:hover {
-  background: var(--p-surface-100);
-}
-.app-dark .thread-row:hover {
-  background: var(--p-surface-800);
-}
-.thread-row.active {
-  background: color-mix(in srgb, var(--p-primary-500) 14%, transparent);
-  border-color: color-mix(in srgb, var(--p-primary-500) 30%, transparent);
-}
-.thread-row.active:hover {
-  background: color-mix(in srgb, var(--p-primary-500) 20%, transparent);
-}
-.thread-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.thread-time {
-  flex-shrink: 0;
-  font-size: 0.72rem;
-  color: var(--app-text-muted);
 }
 </style>

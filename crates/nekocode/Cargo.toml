@@ -31,3 +31,5 @@ nekocode-shell.workspace = true
 nekocode-tool.workspace = true
 nekocode-mcp.workspace = true
 nekocode-skills.workspace = true
+nekocode-subthread.workspace = true
+async-trait.workspace = true

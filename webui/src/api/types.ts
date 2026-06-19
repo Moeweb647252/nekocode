@@ -15,6 +15,12 @@ export interface Thread {
   model: string
   generateStartTurnId: number | null
   workspaceId: number | null
+  /**
+   * Parent thread id when this is a subthread. `null` for top-level threads.
+   * Backend column: `own_by_id` (serde camelCase). Used by the sidebar to
+   * build the workspace > thread > subthread tree.
+   */
+  ownById: number | null
   updatedAt: string
   createdAt: string
 }

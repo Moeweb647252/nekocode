@@ -37,3 +37,4 @@ nekocode-shell = { path = "crates/nekocode-shell" }
 nekocode-tool = { path = "crates/nekocode-tool" }
 nekocode-mcp = { path = "crates/nekocode-mcp" }
 nekocode-skills = { path = "crates/nekocode-skills" }
+nekocode-subthread = { path = "crates/nekocode-subthread" }
