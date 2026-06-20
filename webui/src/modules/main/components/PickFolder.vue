@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { listDir, type ListDirEntry } from '@/api'
 import type { DynamicDialogInstance } from 'primevue/dynamicdialogoptions'
+import { useToast } from 'primevue/usetoast'
 
 const dialogRef = inject<Ref<DynamicDialogInstance>>('dialogRef')
+const toast = useToast()
 const currentPath = ref('')
 const selected = ref()
 const entries: Ref<ListDirEntry[]> = ref([])
@@ -22,6 +24,7 @@ async function load(path: string) {
     entries.value = await listDir(path)
   } catch (e) {
     console.error('Failed to list directory:', e)
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to list directory', life: 5000 })
     entries.value = []
   }
 }

@@ -2,10 +2,12 @@
 import { createThread, createWorkspace, getDirs, listWorkspaces } from '@/api'
 import type { Thread, WorkspaceResponse } from '@/api/types'
 import { useDialog } from 'primevue'
+import { useToast } from 'primevue/usetoast'
 import PickFolder from './PickFolder.vue'
 import ThreadTreeNode from './ThreadTreeNode.vue'
 
 const dialog = useDialog()
+const toast = useToast()
 
 // Workspaces are a persisted, server-owned grouping (one per working
 // directory), each carrying its threads. Loaded from /workspace/list.
@@ -18,6 +20,7 @@ async function loadWorkspaces() {
     workspaces.value = await listWorkspaces()
   } catch (e) {
     console.error('Failed to list workspaces:', e)
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to load workspaces', life: 5000 })
   }
 }
 
@@ -152,11 +155,13 @@ const newWorkspace = async () => {
           await loadWorkspaces()
         } catch (e) {
           console.error('Failed to create workspace:', e)
+          toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to create workspace', life: 5000 })
         }
       },
     })
   } catch (e) {
     console.error('Failed to open new-workspace dialog:', e)
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Could not open folder picker', life: 5000 })
   }
 }
 
@@ -169,6 +174,7 @@ const newThreadInWorkspace = async (ws: WorkspaceResponse) => {
     await loadWorkspaces()
   } catch (e) {
     console.error('Failed to create thread:', e)
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to create thread', life: 5000 })
   }
 }
 </script>

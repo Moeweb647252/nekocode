@@ -184,6 +184,48 @@ export interface ThreadResponse {
 export interface MiddlewareResponse {
   id: number
   name: string
-  config: Record<string, unknown>
+  config: MiddlewareConfig
   enabled: boolean
 }
+
+// ════════════════════════════════════════════════════════════════════
+// Middleware config types — matching Rust serde(rename_all = "camelCase")
+// ════════════════════════════════════════════════════════════════════
+
+/** Matches crates/nekocode-shell/src/config.rs ShellConfig */
+export interface ShellConfig {
+  workingDirectory?: string
+  shell?: string
+  timeoutSecs?: number | null
+  envs: Record<string, string>
+}
+
+/** Matches crates/nekocode-file/src/config.rs FileConfig */
+export interface FileConfig {
+  workingDirectory?: string
+}
+
+/** Matches crates/nekocode-skills/src/config.rs SkillsConfig */
+export interface SkillsConfig {
+  enabled: string[]
+}
+
+/** Matches crates/nekocode-subthread/src/config.rs SubthreadConfig */
+export interface SubthreadConfig {
+  allowSubthread: boolean
+}
+
+/** Matches crates/nekocode-mcp/src/config.rs McpConfig */
+export type Transport = 'stdio' | 'http'
+
+export interface McpConfig {
+  transport: Transport
+  serverCommand?: string
+  serverUrl?: string
+  envs: Record<string, string>
+  authHeaders: Record<string, string>
+  toolsEnabled: Record<string, boolean>
+}
+
+/** Union of all middleware config shapes, keyed by middleware name. */
+export type MiddlewareConfig = ShellConfig | FileConfig | SkillsConfig | SubthreadConfig | McpConfig

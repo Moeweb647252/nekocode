@@ -6,8 +6,10 @@ import ThreadSettingsDialog from "./ThreadSettingsDialog.vue";
 import { activateThread, getThread } from "@/api/thread.ts";
 import { streamGenerate } from "@/api/generate.ts";
 import { useDialog } from 'primevue';
+import { useToast } from 'primevue/usetoast';
 
 const dialog = useDialog();
+const toast = useToast();
 
 const selectedThread = inject<Ref<Thread>>("selectedThread");
 const thread = ref<ThreadResponse | null>(null);
@@ -51,6 +53,7 @@ onMounted(async () => {
     if (!got.active) await activateThread(got.id);
   } catch (e) {
     console.error("Failed to load thread:", e);
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to load thread', life: 5000 });
   }
 });
 
@@ -155,6 +158,7 @@ const sendMessage = async () => {
     onError: (err) => {
       sending.value = false;
       console.error(err);
+      toast.add({ severity: 'error', summary: 'Connection Error', detail: 'Lost connection to the server', life: 8000 });
     },
   });
 };
@@ -171,7 +175,10 @@ const openSettings = () => {
     onClose: (changed: unknown) => {
       if (changed === true) {
         // Reload thread to refresh title/model in the sub-header.
-        getThread(id).then(t => { if (alive) thread.value = t; }).catch(console.error);
+        getThread(id).then(t => { if (alive) thread.value = t; }).catch((e) => {
+          console.error(e);
+          toast.add({ severity: 'warn', summary: 'Warning', detail: 'Failed to refresh thread', life: 3000 });
+        });
       }
     },
   });

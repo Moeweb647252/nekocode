@@ -13,6 +13,7 @@ import {
   updateThread,
 } from "@/api";
 import type { DynamicDialogInstance } from "primevue/dynamicdialogoptions";
+import type { ShellConfig, FileConfig, SkillsConfig, SubthreadConfig, McpConfig, MiddlewareConfig } from "@/api/types";
 
 const dialogRef = inject<Ref<DynamicDialogInstance>>("dialogRef");
 const threadId = (dialogRef?.value?.data as { threadId?: number } | undefined)?.threadId;
@@ -31,19 +32,19 @@ const activeSection = ref<"basic" | "middlewares">("basic");
 
 // Singleton middlewares: Shell and Tool are at most one per thread.
 // Their enabled flag lives on the DB row; toggling updates the row.
-interface SingletonEntry {
+interface SingletonEntry<T = ShellConfig | FileConfig | SkillsConfig | SubthreadConfig> {
   id: number | null;
   enabled: boolean;
   originalEnabled: boolean;
-  config: Record<string, unknown>;
-  original: Record<string, unknown>;
+  config: T;
+  original: T;
   envsRows: { key: string; value: string }[];
 }
 
-const shellEntry = ref<SingletonEntry | null>(null);
-const toolEntry = ref<SingletonEntry | null>(null);
-const skillsEntry = ref<SingletonEntry | null>(null);
-const subthreadEntry = ref<SingletonEntry | null>(null);
+const shellEntry = ref<SingletonEntry<ShellConfig> | null>(null);
+const toolEntry = ref<SingletonEntry<FileConfig> | null>(null);
+const skillsEntry = ref<SingletonEntry<SkillsConfig> | null>(null);
+const subthreadEntry = ref<SingletonEntry<SubthreadConfig> | null>(null);
 const shellExpanded = ref(false);
 const toolExpanded = ref(false);
 const skillsExpanded = ref(false);
@@ -59,8 +60,8 @@ interface McpEntry {
   id: number | null;
   enabled: boolean;
   originalEnabled: boolean;
-  config: Record<string, unknown>;
-  original: Record<string, unknown>;
+  config: McpConfig;
+  original: McpConfig;
   envsRows: { key: string; value: string }[];
   authHeadersRows: { key: string; value: string }[];
   toolsRows: { name: string; description: string; enabled: boolean }[];
@@ -74,25 +75,25 @@ const probeError = ref("");
 const modelChanged = computed(() => model.value !== originalModel.value);
 const titleChanged = computed(() => title.value !== originalTitle.value);
 
-function splitEnvs(cfg: Record<string, unknown>): { key: string; value: string }[] {
-  const envs = (cfg.envs as Record<string, string> | undefined) ?? {};
+function splitEnvs(cfg: { envs?: Record<string, string> }): { key: string; value: string }[] {
+  const envs = cfg.envs ?? {};
   return Object.entries(envs).map(([key, value]) => ({ key, value: String(value ?? "") }));
 }
-function splitAuthHeaders(cfg: Record<string, unknown>): { key: string; value: string }[] {
-  const headers = (cfg.authHeaders as Record<string, string> | undefined) ?? {};
+function splitAuthHeaders(cfg: { authHeaders?: Record<string, string> }): { key: string; value: string }[] {
+  const headers = cfg.authHeaders ?? {};
   return Object.entries(headers).map(([key, value]) => ({ key, value: String(value ?? "") }));
 }
 function splitTools(
-  cfg: Record<string, unknown>,
+  cfg: { toolsEnabled?: Record<string, boolean> },
 ): { name: string; description: string; enabled: boolean }[] {
-  const tools = (cfg.toolsEnabled as Record<string, boolean> | undefined) ?? {};
+  const tools = cfg.toolsEnabled ?? {};
   return Object.entries(tools).map(([name, on]) => ({ name, description: "", enabled: !!on }));
 }
-function setField(cfg: Record<string, unknown>, key: string, value: unknown): void {
+function setField<T extends Record<string, unknown>>(cfg: T, key: keyof T & string, value: T[keyof T & string]): void {
   cfg[key] = value;
 }
 
-function defaultMcpConfig(): Record<string, unknown> {
+function defaultMcpConfig(): McpConfig {
   return {
     transport: "stdio",
     serverCommand: "",
@@ -134,17 +135,17 @@ onMounted(async () => {
           id: m.id,
           enabled: m.enabled,
           originalEnabled: m.enabled,
-          config: { ...m.config },
-          original: { ...m.config },
-          envsRows: splitEnvs(m.config),
+          config: { ...m.config } as ShellConfig,
+          original: { ...m.config } as ShellConfig,
+          envsRows: splitEnvs(m.config as ShellConfig),
         };
       } else if (m.name === "tool" && !toolEntry.value) {
         toolEntry.value = {
           id: m.id,
           enabled: m.enabled,
           originalEnabled: m.enabled,
-          config: { ...m.config },
-          original: { ...m.config },
+          config: { ...m.config } as FileConfig,
+          original: { ...m.config } as FileConfig,
           envsRows: [],
         };
       } else if (m.name === "skills" && !skillsEntry.value) {
@@ -152,8 +153,8 @@ onMounted(async () => {
           id: m.id,
           enabled: m.enabled,
           originalEnabled: m.enabled,
-          config: { ...m.config },
-          original: { ...m.config },
+          config: { ...m.config } as SkillsConfig,
+          original: { ...m.config } as SkillsConfig,
           envsRows: [],
         };
       } else if (m.name === "subthread" && !subthreadEntry.value) {
@@ -161,8 +162,8 @@ onMounted(async () => {
           id: m.id,
           enabled: m.enabled,
           originalEnabled: m.enabled,
-          config: { ...m.config },
-          original: { ...m.config },
+          config: { ...m.config } as SubthreadConfig,
+          original: { ...m.config } as SubthreadConfig,
           envsRows: [],
         };
       } else if (m.name === "mcp") {
@@ -170,11 +171,11 @@ onMounted(async () => {
           id: m.id,
           enabled: m.enabled,
           originalEnabled: m.enabled,
-          config: { ...m.config },
-          original: { ...m.config },
-          envsRows: splitEnvs(m.config),
-          authHeadersRows: splitAuthHeaders(m.config),
-          toolsRows: splitTools(m.config),
+          config: { ...m.config } as McpConfig,
+          original: { ...m.config } as McpConfig,
+          envsRows: splitEnvs(m.config as McpConfig),
+          authHeadersRows: splitAuthHeaders(m.config as McpConfig),
+          toolsRows: splitTools(m.config as McpConfig),
         });
       }
     }
@@ -182,7 +183,7 @@ onMounted(async () => {
     // Provide an in-memory default so the panel is always shown and its template
     // bindings stay null-safe. Persisted on first save.
     if (!skillsEntry.value) {
-      const defaultCfg = { enabled: [] };
+      const defaultCfg: SkillsConfig = { enabled: [] };
       skillsEntry.value = {
         id: null,
         enabled: false,
@@ -196,7 +197,7 @@ onMounted(async () => {
     // Subthread is a singleton but not auto-seeded on thread creation. Provide an
     // in-memory default so the panel is always shown. Persisted on first save.
     if (!subthreadEntry.value) {
-      const defaultCfg = { allowSubthread: false };
+      const defaultCfg: SubthreadConfig = { allowSubthread: false };
       subthreadEntry.value = {
         id: null,
         enabled: false,
@@ -213,7 +214,7 @@ onMounted(async () => {
   }
 });
 
-function singletonChanged(e: SingletonEntry): boolean {
+function singletonChanged<T>(e: SingletonEntry<T>): boolean {
   return JSON.stringify(e.config) !== JSON.stringify(e.original) || e.enabled !== e.originalEnabled;
 }
 function mcpChanged(e: McpEntry): boolean {
@@ -233,27 +234,24 @@ const middlewareChanged = computed(() => {
 });
 const dirty = computed(() => titleChanged.value || modelChanged.value || middlewareChanged.value);
 
-function flushEnvs(entry: {
-  envsRows: { key: string; value: string }[];
-  config: Record<string, unknown>;
-}) {
+function flushEnvs(entry: { envsRows: { key: string; value: string }[]; config: { envs: Record<string, string> } }) {
   const envs: Record<string, string> = {};
   for (const row of entry.envsRows) {
     const key = row.key.trim();
     if (key) envs[key] = row.value;
   }
-  setField(entry.config, "envs", envs);
+  entry.config.envs = envs;
 }
 function flushAuthHeaders(entry: {
   authHeadersRows: { key: string; value: string }[];
-  config: Record<string, unknown>;
+  config: { authHeaders: Record<string, string> };
 }) {
   const headers: Record<string, string> = {};
   for (const row of entry.authHeadersRows) {
     const key = row.key.trim();
     if (key) headers[key] = row.value;
   }
-  setField(entry.config, "authHeaders", headers);
+  entry.config.authHeaders = headers;
 }
 function flushTools(entry: McpEntry) {
   const toolsEnabled: Record<string, boolean> = {};
@@ -261,7 +259,7 @@ function flushTools(entry: McpEntry) {
     const name = row.name.trim();
     if (name) toolsEnabled[name] = row.enabled;
   }
-  setField(entry.config, "toolsEnabled", toolsEnabled);
+  entry.config.toolsEnabled = toolsEnabled;
 }
 
 function addEnvRow(entry: { envsRows: { key: string; value: string }[] }) {
@@ -285,13 +283,9 @@ async function testConnection(entry: McpEntry) {
   probeError.value = "";
   flushEnvs(entry);
   flushAuthHeaders(entry);
-  const transport = (entry.config.transport as string) || "stdio";
-  const serverCommand = (entry.config.serverCommand as string) || null;
-  const serverUrl = (entry.config.serverUrl as string) || null;
-  const envs = (entry.config.envs as Record<string, string>) ?? {};
-  const authHeaders = (entry.config.authHeaders as Record<string, string>) ?? {};
+  const { transport, serverCommand, serverUrl, envs, authHeaders } = entry.config;
   try {
-    const tools = await probeMcp(transport, serverCommand, serverUrl, envs, authHeaders);
+    const tools = await probeMcp(transport, serverCommand ?? null, serverUrl ?? null, envs, authHeaders);
     const prev = new Map(entry.toolsRows.map((r) => [r.name, r.enabled]));
     entry.toolsRows = tools.map((t) => ({
       name: t.name,
@@ -323,6 +317,14 @@ function removeMcpEntry(index: number) {
   mcpEntries.value.splice(index, 1);
 }
 
+async function saveSingleton<T extends MiddlewareConfig>(entry: SingletonEntry<T>, name: string) {
+  if (entry.id == null) {
+    await createMiddleware(threadId!, name, entry.config);
+  } else if (singletonChanged(entry)) {
+    await updateMiddleware(entry.id, entry.config, entry.enabled);
+  }
+}
+
 async function save() {
   if (threadId == null || saving.value || !dirty.value) {
     dialogRef?.value?.close(false);
@@ -337,51 +339,23 @@ async function save() {
 
     // Shell singleton.
     if (shellEntry.value) {
-      const e = shellEntry.value;
-      flushEnvs(e);
-      if (e.id == null) {
-        await createMiddleware(threadId, "shell", e.config);
-        needsReactivation = true;
-      } else if (singletonChanged(e)) {
-        await updateMiddleware(e.id, e.config, e.enabled);
-        needsReactivation = true;
-      }
+      flushEnvs(shellEntry.value);
+      await saveSingleton(shellEntry.value, "shell");
     }
 
     // Tool singleton.
     if (toolEntry.value) {
-      const e = toolEntry.value;
-      if (e.id == null) {
-        await createMiddleware(threadId, "tool", e.config);
-        needsReactivation = true;
-      } else if (singletonChanged(e)) {
-        await updateMiddleware(e.id, e.config, e.enabled);
-        needsReactivation = true;
-      }
+      await saveSingleton(toolEntry.value, "tool");
     }
 
     // Skills singleton.
     if (skillsEntry.value) {
-      const e = skillsEntry.value;
-      if (e.id == null) {
-        await createMiddleware(threadId, "skills", e.config);
-        needsReactivation = true;
-      } else if (singletonChanged(e)) {
-        await updateMiddleware(e.id, e.config, e.enabled);
-        needsReactivation = true;
-      }
+      await saveSingleton(skillsEntry.value, "skills");
     }
 
     // Subthread singleton.
     if (subthreadEntry.value) {
-      const e = subthreadEntry.value;
-      if (e.id == null) {
-        await createMiddleware(threadId, "subthread", e.config);
-        needsReactivation = true;
-      } else if (singletonChanged(e)) {
-        await updateMiddleware(e.id, e.config, e.enabled);
-        needsReactivation = true;
-      }
+      await saveSingleton(subthreadEntry.value, "subthread");
     }
 
     // MCP entries: create new, update changed.
@@ -503,7 +477,7 @@ function cancel() {
               <div class="field">
                 <label class="field-label">Working directory</label>
                 <InputText
-                  v-model="shellEntry!.config.workingDirectory as string | undefined"
+                  v-model="shellEntry!.config.workingDirectory"
                   class="field-input"
                   placeholder="(inherit server cwd)"
                 />
@@ -511,7 +485,7 @@ function cancel() {
               <div class="field">
                 <label class="field-label">Shell</label>
                 <InputText
-                  v-model="shellEntry!.config.shell as string | undefined"
+                  v-model="shellEntry!.config.shell"
                   class="field-input"
                   placeholder="bash"
                 />
@@ -586,7 +560,7 @@ function cancel() {
               <div class="field">
                 <label class="field-label">Working directory</label>
                 <InputText
-                  v-model="toolEntry!.config.workingDirectory as string | undefined"
+                  v-model="toolEntry!.config.workingDirectory"
                   class="field-input"
                   placeholder="(inherit server cwd)"
                 />
@@ -621,7 +595,7 @@ function cancel() {
               <div class="field">
                 <label class="field-label">Enabled skills</label>
                 <MultiSelect
-                  :model-value="(skillsEntry!.config.enabled as string[]) || []"
+                  :model-value="skillsEntry!.config.enabled || []"
                   :options="availableSkills"
                   option-label="name"
                   option-value="name"
@@ -674,11 +648,9 @@ function cancel() {
               <div class="field">
                 <label class="field-label">Allow subthreads</label>
                 <ToggleSwitch
-                  :model-value="(subthreadEntry!.config.allowSubthread as boolean) ?? false"
-                  @update:model-value="
-                    (v) => setField(subthreadEntry!.config, 'allowSubthread', v as boolean)
-                  "
-                />
+		                  :model-value="subthreadEntry!.config.allowSubthread ?? false"
+		                  @update:model-value="(v) => subthreadEntry!.config.allowSubthread = v"
+		                />
                 <span class="field-hint"
                   >When enabled, spawned subthreads will also receive the subthread middleware,
                   allowing them to spawn their own subthreads (recursive fan-out). Disable to
@@ -734,7 +706,7 @@ function cancel() {
                   <div class="field">
                     <label class="field-label">Transport</label>
                     <SelectButton
-                      :model-value="(entry.config.transport as string) || 'stdio'"
+                      :model-value="entry.config.transport || 'stdio'"
                       :options="TRANSPORT_OPTIONS"
                       option-value="value"
                       option-label="label"
@@ -748,11 +720,11 @@ function cancel() {
                   </div>
 
                   <!-- HTTP transport -->
-                  <template v-if="((entry.config.transport as string) || 'stdio') === 'http'">
+                  <template v-if="(entry.config.transport || 'stdio') === 'http'">
                     <div class="field">
                       <label class="field-label">Server URL</label>
                       <InputText
-                        v-model="entry.config.serverUrl as string | undefined"
+                        v-model="entry.config.serverUrl"
                         class="field-input"
                         placeholder="http://localhost:8080/mcp"
                       />
@@ -789,7 +761,7 @@ function cancel() {
                     <div class="field">
                       <label class="field-label">Server command</label>
                       <InputText
-                        v-model="entry.config.serverCommand as string | undefined"
+                        v-model="entry.config.serverCommand"
                         class="field-input"
                         placeholder="npx -y @modelcontextprotocol/server-filesystem"
                       />

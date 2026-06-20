@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import PrimeVue from 'primevue/config'
 import Aura from '@primeuix/themes/aura'
 import DialogService from 'primevue/dialogservice'
+import ToastService from 'primevue/toastservice'
 import { definePreset, palette } from '@primeuix/themes'
 
 import App from './App.vue'
@@ -77,6 +78,7 @@ app.use(PrimeVue, {
   },
 })
 app.use(DialogService)
+app.use(ToastService)
 
 // Apply persisted/system theme before mount to avoid a flash.
 useAppStore().initTheme()
