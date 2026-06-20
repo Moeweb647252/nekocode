@@ -26,6 +26,10 @@ export default defineConfigWithVueTs(
     name: 'app/rules-override',
     rules: {
       'vue/multi-word-component-names': 'off',
+      // Config panels receive reactive entry objects and mutate their
+      // properties (e.g. entry.config.xxx). This is intentional: the entry
+      // is a shared mutable object, not a primitive value.
+      'vue/no-mutating-props': 'off',
     },
   },
 
