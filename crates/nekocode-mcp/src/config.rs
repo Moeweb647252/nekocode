@@ -54,3 +54,68 @@ impl McpConfig {
         serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn default_round_trip() {
+        let cfg = McpConfig::default();
+        let v = cfg.to_value();
+        let cfg2 = McpConfig::from_value(&v);
+        assert_eq!(cfg.transport, cfg2.transport);
+        assert_eq!(cfg.server_command, cfg2.server_command);
+        assert_eq!(cfg.server_url, cfg2.server_url);
+        assert_eq!(cfg.envs, cfg2.envs);
+        assert_eq!(cfg.auth_headers, cfg2.auth_headers);
+        assert_eq!(cfg.tools_enabled, cfg2.tools_enabled);
+    }
+
+    #[test]
+    fn stdio_config_round_trip() {
+        let cfg = McpConfig {
+            transport: Transport::Stdio,
+            server_command: Some("npx -y @mcp/server".into()),
+            server_url: None,
+            envs: HashMap::from([("NODE_ENV".into(), "development".into())]),
+            auth_headers: HashMap::new(),
+            tools_enabled: HashMap::from([("read".into(), true)]),
+        };
+        let v = cfg.to_value();
+        assert_eq!(v["transport"], "stdio");
+        assert!(v.get("serverCommand").is_some());
+        let cfg2 = McpConfig::from_value(&v);
+        assert_eq!(cfg.transport, cfg2.transport);
+        assert_eq!(cfg.server_command, cfg2.server_command);
+        assert_eq!(cfg.envs, cfg2.envs);
+    }
+
+    #[test]
+    fn http_config_round_trip() {
+        let cfg = McpConfig {
+            transport: Transport::Http,
+            server_command: None,
+            server_url: Some("http://localhost:8080/mcp".into()),
+            envs: HashMap::new(),
+            auth_headers: HashMap::from([("Authorization".into(), "Bearer test".into())]),
+            tools_enabled: HashMap::new(),
+        };
+        let v = cfg.to_value();
+        assert_eq!(v["transport"], "http");
+        assert!(v.get("serverUrl").is_some());
+        let cfg2 = McpConfig::from_value(&v);
+        assert_eq!(cfg.transport, cfg2.transport);
+        assert_eq!(cfg.server_url, cfg2.server_url);
+        assert_eq!(cfg.auth_headers, cfg2.auth_headers);
+    }
+
+    #[test]
+    fn null_input_gives_default() {
+        let cfg = McpConfig::from_value(&serde_json::Value::Null);
+        assert_eq!(cfg.transport, Transport::Stdio);
+        assert!(cfg.server_command.is_none());
+        assert!(cfg.server_url.is_none());
+    }
+}

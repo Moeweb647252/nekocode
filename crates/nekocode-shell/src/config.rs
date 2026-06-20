@@ -55,3 +55,60 @@ impl ShellConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn default_round_trip() {
+        let cfg = ShellConfig::default();
+        let v = cfg.to_value();
+        let cfg2 = ShellConfig::from_value(&v);
+        assert_eq!(cfg.working_directory, cfg2.working_directory);
+        assert_eq!(cfg.shell, cfg2.shell);
+        assert_eq!(cfg.timeout_secs, cfg2.timeout_secs);
+        assert_eq!(cfg.envs, cfg2.envs);
+    }
+
+    #[test]
+    fn full_config_round_trip() {
+        let cfg = ShellConfig {
+            working_directory: Some("/tmp".into()),
+            shell: Some("zsh".into()),
+            timeout_secs: Some(30),
+            envs: HashMap::from([
+                ("FOO".into(), "bar".into()),
+                ("BAZ".into(), "qux".into()),
+            ]),
+        };
+        let v = cfg.to_value();
+        // Verify camelCase serialization.
+        assert!(v.get("workingDirectory").is_some());
+        assert!(v.get("timeoutSecs").is_some());
+        let cfg2 = ShellConfig::from_value(&v);
+        assert_eq!(cfg.working_directory, cfg2.working_directory);
+        assert_eq!(cfg.shell, cfg2.shell);
+        assert_eq!(cfg.timeout_secs, cfg2.timeout_secs);
+        assert_eq!(cfg.envs, cfg2.envs);
+    }
+
+    #[test]
+    fn null_input_gives_default() {
+        let cfg = ShellConfig::from_value(&serde_json::Value::Null);
+        assert!(cfg.working_directory.is_none());
+        assert!(cfg.shell.is_none());
+        assert!(cfg.timeout_secs.is_none());
+        assert!(cfg.envs.is_empty());
+    }
+
+    #[test]
+    fn partial_config_round_trip() {
+        let v = json!({ "workingDirectory": "/home", "envs": { "KEY": "val" } });
+        let cfg = ShellConfig::from_value(&v);
+        assert_eq!(cfg.working_directory.as_deref(), Some("/home"));
+        assert!(cfg.shell.is_none());
+        assert_eq!(cfg.envs["KEY"], "val");
+    }
+}
