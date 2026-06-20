@@ -84,7 +84,8 @@ impl DeepSeek {
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .json(&body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| ProviderError::HttpError(e.to_string()))?;
         if resp.status() != 200 {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
@@ -100,7 +101,7 @@ impl DeepSeek {
             .map_err(|e| ProviderError::Other(e.into()))?;
         let mut stream = OpenAIV1Stream::new(sse);
         let mut acc = ResponseAccumulator::new();
-        while let Some(event) = stream.next_event().await? {
+        while let Some(event) = stream.next_event().await.map_err(|e| ProviderError::HttpError(e.to_string()))? {
             let event = event; // re-bind as immutable
             sender.send(event.clone()).ok();
             acc.ingest(&event);
@@ -163,14 +164,15 @@ impl DeepSeek {
             .header("anthropic-version", "2023-06-01")
             .json(&body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| ProviderError::HttpError(e.to_string()))?;
         let sse = resp
             .events()
             .await
             .map_err(|e| ProviderError::Other(e.into()))?;
         let mut stream = AnthropicStream::new(sse);
         let mut acc = ResponseAccumulator::new();
-        while let Some(event) = stream.next_event().await? {
+        while let Some(event) = stream.next_event().await.map_err(|e| ProviderError::HttpError(e.to_string()))? {
             sender.send(event.clone()).ok();
             acc.ingest(&event);
         }

@@ -9,7 +9,7 @@ use crate::types::GenerateRequest;
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
     #[error("HTTP error: {0}")]
-    HttpError(#[from] reqwest::Error),
+    HttpError(String),
     #[error("Error while deserializing data: {0}")]
     DeserializationError(#[from] serde_json::Error),
     #[error(transparent)]
