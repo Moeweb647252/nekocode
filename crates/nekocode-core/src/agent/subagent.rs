@@ -47,6 +47,7 @@ use tokio::sync::{Notify, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::agent::error::AgentError;
+use crate::agent::store::MessageStore;
 use crate::agent::{AgentEvent, AgentEventType};
 use crate::middleware::{AgentControlFlow, Middleware};
 use crate::provider::{Provider, ProviderEvent};
@@ -231,195 +232,48 @@ impl SubAgent {
         input: String,
         sender: Option<UnboundedSender<AgentEvent>>,
     ) -> Result<SubAgentRunSummary, AgentError> {
-        // Append the user input. (= run_loop create!(Message::User).)
-        {
-            let mut guard = self.messages.write().await;
-            guard.push(Message::User(MessageContent::Text { content: input }));
-        }
+        // Build an in-memory store wrapping this SubAgent's message history.
+        // We clone the messages into the store; after the loop we write them
+        // back so that `self.messages` stays in sync (important for `spawn`).
+        let store = super::store::InMemoryMessageStore::new(self.messages.read().await.clone());
+
+        // Append the user input.
+        store
+            .push_user_message(MessageContent::Text { content: input })
+            .await?;
 
         let base_system_prompt = self.system_prompt.clone();
-        // Build the initial request from the current history.
-        let mut request = GenerateRequest {
-            messages: self.messages.read().await.clone(),
+        let request = GenerateRequest {
+            messages: store.current_messages().await?,
             system_prompt: base_system_prompt.clone(),
             ..Default::default()
         };
 
-        let mut index: usize = 0;
-        let mut total_usage = Usage::default();
+        let (_index, total_usage) = super::store::run_loop_core(
+            &store,
+            self.provider.clone(),
+            &self.middlewares,
+            &sender,
+            base_system_prompt,
+            request,
+            0,
+        )
+        .await?;
 
-        // ---- Outer middleware loop ---------------------------------------
-        loop {
-            // 1. before_generate: register tools / mutate request.
-            let mut tool_registry = ToolRegistry::new();
-            for middleware in self.middlewares.iter() {
-                middleware
-                    .before_generate(&mut request, &mut tool_registry)
-                    .await?;
-            }
-            request.tool_specs = tool_registry.specs();
-            let system_prompt = request.system_prompt.clone();
-            let tool_specs = request.tool_specs.clone();
+        // Finalize: in-memory store is a no-op, but call it for consistency.
+        store.finalize(&total_usage).await?;
 
-            let mut generate_response = GenerateResponse::new();
-
-            // ---- Inner tool-call loop ------------------------------------
-            loop {
-                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-                let provider = self.provider.clone();
-
-                // Emit MessageStart up front, suppressing the provider's
-                // duplicate (mirrors `Agent::run_loop`).
-                if let Some(s) = sender.as_ref() {
-                    s.send(AgentEvent {
-                        index,
-                        data: AgentEventType::StreamEvent(StreamEvent {
-                            data: StreamEventData::MessageStart(MessageMetadata {
-                                role: Role::Assistant,
-                            }),
-                            created_at: jiff::Timestamp::now(),
-                        }),
-                    })
-                    .map_err(|e| AgentError::Other(anyhow!("error sending agent event {e}")))?;
-                    index += 1;
-                }
-
-                let request_for_call = request.clone();
-                let handle = tokio::spawn(async move {
-                    provider.stream_generate(request_for_call, tx).await
-                });
-
-                // Forward provider events to the optional sender. The break
-                // decision is taken from the *response*, NOT from MessageEnd.
-                while let Some(event) = rx.recv().await {
-                    if matches!(event, ProviderEvent::MessageStart) {
-                        continue;
-                    }
-                    if let Some(s) = sender.as_ref() {
-                        s.send(AgentEvent {
-                            index,
-                            data: AgentEventType::StreamEvent((&event).into()),
-                        })
-                        .map_err(|e| {
-                            AgentError::Other(anyhow!("error sending agent event {e}"))
-                        })?;
-                        index += 1;
-                    }
-                }
-
-                let response = handle
-                    .await
-                    .map_err(|e| -> AgentError { anyhow!("error joining task {e}").into() })??;
-
-                total_usage.total_input += response.usage.total_input;
-                total_usage.total_output += response.usage.total_output;
-                total_usage.cache_miss += response.usage.cache_miss;
-                if response.usage.cache_hit {
-                    total_usage.cache_hit = true;
-                }
-
-                // Persist (in-memory) the assistant message.
-                {
-                    let mut guard = self.messages.write().await;
-                    guard.push(Message::Assistant(response.message.clone()));
-                }
-
-                // Execute any tool calls; persist results in-memory.
-                let mut this_generation_had_tool_calls = false;
-                for block in response.message.blocks.iter() {
-                    if let AssistantContentBlock::ToolCall(tool_call) = block {
-                        this_generation_had_tool_calls = true;
-                        let tool_call_result = match tool_registry.get(&tool_call.name) {
-                            Some(tool) => ToolCallResult {
-                                id: tool_call.id.clone(),
-                                result: ToolCallResultInner::from(
-                                    tool.call(tool_call.args.clone()).await,
-                                ),
-                            },
-                            None => ToolCallResult {
-                                id: tool_call.id.clone(),
-                                result: ToolCallResultInner::Error {
-                                    error: "Tool not found".into(),
-                                },
-                            },
-                        };
-                        {
-                            let mut guard = self.messages.write().await;
-                            guard.push(Message::ToolCallResult(tool_call_result.clone()));
-                        }
-                        let stream_event = StreamEvent {
-                            data: StreamEventData::ToolCallResult(tool_call_result),
-                            created_at: jiff::Timestamp::now(),
-                        };
-                        if let Some(s) = sender.as_ref() {
-                            s.send(AgentEvent {
-                                index,
-                                data: AgentEventType::StreamEvent(stream_event.clone()),
-                            })
-                            .map_err(|e| {
-                                AgentError::Other(anyhow!("error sending agent event {e}"))
-                            })?;
-                            index += 1;
-                        }
-                        generate_response.merge_stream_event(stream_event);
-                    }
-                }
-                generate_response.merge(response);
-
-                // Inner-loop break decision: stop only when the response had
-                // no tool calls. Otherwise feed the just-persisted tool
-                // results back into a fresh generation.
-                if !this_generation_had_tool_calls {
-                    break;
-                }
-                request = GenerateRequest {
-                    messages: self.messages.read().await.clone(),
-                    system_prompt: system_prompt.clone(),
-                    tool_specs: tool_specs.clone(),
-                };
-            }
-
-            // 2. after_generate hooks.
-            let mut control_flow = AgentControlFlow::Output;
-            for middleware in self.middlewares.iter() {
-                middleware
-                    .after_generate(&generate_response, &mut control_flow)
-                    .await?;
-            }
-            match control_flow {
-                AgentControlFlow::Output => break,
-                AgentControlFlow::GenerateWith(content) => {
-                    {
-                        let mut guard = self.messages.write().await;
-                        guard.push(Message::MiddlewareMessage(content));
-                    }
-                    // Preserve the captured system prompt across the outer
-                    // middleware-driven regeneration, mirroring
-                    // `Agent::run_loop`'s outer-loop reset.
-                    request = GenerateRequest {
-                        messages: self.messages.read().await.clone(),
-                        system_prompt: base_system_prompt.clone(),
-                        ..Default::default()
-                    };
-                }
-            }
-        }
-
-        // Mirror `Agent::run_loop`'s final `TurnEnd` event. Only emitted
-        // when a sender is attached.
-        if let Some(s) = sender.as_ref() {
-            s.send(AgentEvent {
-                index,
-                data: AgentEventType::StreamEvent(StreamEvent {
-                    data: StreamEventData::TurnEnd,
-                    created_at: jiff::Timestamp::now(),
-                }),
-            })
-            .map_err(|e| AgentError::Other(anyhow!("error sending agent event {e}")))?;
+        // Collect final messages from the store and write them back to
+        // self.messages so that subsequent calls or the registry see the
+        // updated history.
+        let final_messages = store.current_messages().await?;
+        {
+            let mut guard = self.messages.write().await;
+            *guard = final_messages.clone();
         }
 
         Ok(SubAgentRunSummary {
-            messages: self.messages.read().await.clone(),
+            messages: final_messages,
             usage: total_usage,
         })
     }
