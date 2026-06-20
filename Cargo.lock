@@ -691,6 +691,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
+name = "constant_time_eq"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2316,17 +2322,18 @@ dependencies = [
  "axum",
  "boxcar",
  "clap",
+ "constant_time_eq",
  "dashmap",
  "dirs",
  "jiff",
  "nekocode-core",
  "nekocode-entities",
+ "nekocode-file",
  "nekocode-mcp",
  "nekocode-provider",
  "nekocode-shell",
  "nekocode-skills",
  "nekocode-subthread",
- "nekocode-tool",
  "nekocode-types",
  "scopeguard",
  "serde",
@@ -2340,10 +2347,6 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
 ]
-
-[[package]]
-name = "nekocode-compact"
-version = "0.1.0"
 
 [[package]]
 name = "nekocode-core"
@@ -2380,6 +2383,18 @@ dependencies = [
 [[package]]
 name = "nekocode-file"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "nekocode-core",
+ "nekocode-entities",
+ "nekocode-types",
+ "serde",
+ "serde_json",
+ "toasty",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "nekocode-mcp"
@@ -2469,22 +2484,6 @@ dependencies = [
  "toasty",
  "tokio",
  "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "nekocode-tool"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "nekocode-core",
- "nekocode-entities",
- "nekocode-types",
- "serde",
- "serde_json",
- "toasty",
- "tokio",
  "tracing",
 ]
 

@@ -1,7 +1,8 @@
 use nekocode_core::{
-    provider::{Provider, ProviderError, ProviderEvent, ProviderResponse, ProviderUsage},
+    provider::{Provider, ProviderError, ProviderEvent, ProviderResponse},
     types::GenerateRequest,
 };
+use nekocode_types::generate::Usage;
 use nekocode_types::{
     config::{DeepSeekConfig, DeepSeekEndpoint},
     generate::{AssistantContentBlock, AssistantMessage, Message, MessageContent},
@@ -63,11 +64,6 @@ impl Provider for DeepSeek {
             DeepSeekEndpoint::OpenAI => self.stream_generate_openai(request, sender).await,
         }
     }
-
-    async fn generate(&self, request: GenerateRequest) -> Result<ProviderResponse, ProviderError> {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        self.stream_generate(request, tx).await
-    }
 }
 
 impl DeepSeek {
@@ -110,7 +106,7 @@ impl DeepSeek {
             acc.ingest(&event);
         }
         let message = acc.finish();
-        let usage = stream.take_usage().unwrap_or(ProviderUsage {
+        let usage = stream.take_usage().unwrap_or(Usage {
             total_input: 0,
             total_output: 0,
             cache_hit: false,
@@ -179,7 +175,7 @@ impl DeepSeek {
             acc.ingest(&event);
         }
         let message = acc.finish();
-        let usage = stream.take_usage().unwrap_or(ProviderUsage {
+        let usage = stream.take_usage().unwrap_or(Usage {
             total_input: 0,
             total_output: 0,
             cache_hit: false,

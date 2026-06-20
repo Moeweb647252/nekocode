@@ -5,7 +5,7 @@ use axum::{extract::ws, response::Response};
 use tracing::error;
 
 use crate::api::{
-    generate::{GenerateState, Reason, StopReason, WebSocketEvent},
+    generate::{GenerateState, Reason, WebSocketEvent},
     prelude::*,
 };
 
@@ -22,23 +22,10 @@ pub async fn stream_generate(State(state): State<AppState>, ws: ws::WebSocketUpg
             Ok(_) => (),
             Err(e) => {
                 error!("error handling stream generate: {e}");
-                send_stop(&mut ws, Reason::Error, e.to_string().into()).await;
+                super::send_stop(&mut ws, Reason::Error, e.to_string().into()).await;
             }
         }
     })
-}
-
-/// Send a terminal `Stop` frame, tolerating serialization / socket errors so
-/// the upgrade future itself never panics.
-async fn send_stop(socket: &mut ws::WebSocket, reason: Reason, detail: serde_json::Value) {
-    let Ok(payload) = serde_json::to_string(&WebSocketEvent::Stop(StopReason { reason, detail }))
-    else {
-        return;
-    };
-    let Ok(payload) = payload.try_into() else {
-        return;
-    };
-    let _ = socket.send(ws::Message::Text(payload)).await;
 }
 
 pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> anyhow::Result<()> {
@@ -96,7 +83,7 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
             // Interrupted: abort the agent task, send Interrupted, and return
             // without emitting a second (Error) Stop frame.
             handle.abort();
-            send_stop(socket, Reason::Interrupted, serde_json::Value::Null).await;
+            super::send_stop(socket, Reason::Interrupted, serde_json::Value::Null).await;
             return Ok(());
         }
     };
@@ -105,7 +92,7 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
         Ok(()) => {
             let summary = handle.await
                 .map_err(|e| anyhow!("error joining agent task: {e}"))??;
-            send_stop(
+            super::send_stop(
                 socket,
                 Reason::Finished,
                 serde_json::to_value(summary)?,

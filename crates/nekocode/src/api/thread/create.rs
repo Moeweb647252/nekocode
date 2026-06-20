@@ -45,7 +45,7 @@ pub async fn create_thread(
     })
     .exec(&mut state.db)
     .await?;
-    let tool_cfg = nekocode_tool::config::FileConfig {
+    let tool_cfg = nekocode_file::config::FileConfig {
         working_directory: Some(payload.working_directory),
     }
     .to_value();

@@ -6,7 +6,8 @@ use futures_util::StreamExt;
 pub mod types;
 
 use crate::sse::ServerSentEvents;
-use nekocode_core::provider::{ProviderError, ProviderEvent, ProviderUsage};
+use nekocode_core::provider::{ProviderError, ProviderEvent};
+use nekocode_types::generate::Usage;
 use nekocode_types::{generate::StopReason, tool::ToolCall};
 use types::{
     ChatCompletionStreamResponse, ChatCompletionStreamUsage, FinishReason,
@@ -46,8 +47,8 @@ impl OpenAIV1Stream {
     }
 
     /// Consume the accumulated usage stats from the stream, if any.
-    pub fn take_usage(&mut self) -> Option<ProviderUsage> {
-        self.usage.take().map(|u| ProviderUsage {
+    pub fn take_usage(&mut self) -> Option<Usage> {
+        self.usage.take().map(|u| Usage {
             total_input: u.prompt_tokens,
             total_output: u.completion_tokens,
             cache_hit: false,

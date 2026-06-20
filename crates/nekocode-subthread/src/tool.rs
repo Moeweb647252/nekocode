@@ -181,7 +181,7 @@ impl Tool for SpawnSubthreadTool {
             ToolError::ExecutionError(format!("Failed to seed shell middleware: {e}"))
         })?;
 
-        let tool_cfg = nekocode_tool_config_value(&working_directory);
+        let tool_cfg = nekocode_file_config_value(&working_directory);
         toasty::create!(Middleware {
             thread_id: subthread.id,
             name: "tool".to_string(),
@@ -234,9 +234,9 @@ fn nekocode_shell_config_value(working_directory: &str) -> serde_json::Value {
     serde_json::json!({ "workingDirectory": working_directory })
 }
 
-/// Build a `nekocode_tool::FileConfig` JSON value for a subthread. Same
+/// Build a `nekocode_file::FileConfig` JSON value for a subthread. Same
 /// rationale as above.
-fn nekocode_tool_config_value(working_directory: &str) -> serde_json::Value {
+fn nekocode_file_config_value(working_directory: &str) -> serde_json::Value {
     serde_json::json!({ "workingDirectory": working_directory })
 }
 

@@ -69,7 +69,16 @@ async fn main() {
     };
 
     let router = Router::new()
-        .nest("/api", api::router())
+        .nest(
+            "/api",
+            api::public_router().merge(
+                api::protected_router()
+                    .layer(axum::middleware::from_fn_with_state(
+                        app_state.clone(),
+                        api::auth_middleware,
+                    )),
+            ),
+        )
         .with_state(app_state);
     axum::serve(listener, router)
         .await

@@ -257,13 +257,14 @@ impl Tool for EditFileTool {
     }
 }
 
-/// Resolve the `path` parameter against the configured working directory.
+/// Resolve the `path` parameter against the configured working directory and
+/// verify it stays within the sandbox boundary.
 fn parse_path(params: &serde_json::Value, config: &FileConfig) -> Result<std::path::PathBuf, ToolError> {
     let raw = params
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| ToolError::InvalidParameters("Missing 'path' parameter".into()))?;
-    Ok(config.resolve_path(raw))
+    config.resolve_and_check(raw).map_err(|e| ToolError::InvalidParameters(e))
 }
 
 fn parse_optional_u64(params: &serde_json::Value, key: &str) -> Option<u64> {

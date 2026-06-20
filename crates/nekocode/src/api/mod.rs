@@ -18,11 +18,16 @@ use serde::Serialize;
 
 use crate::{AppState, api::error::ApiError};
 
-pub fn router() -> Router<AppState> {
+/// Routes that do not require authentication (e.g. login endpoint).
+pub fn public_router() -> Router<AppState> {
+    Router::new().nest("/auth", auth::router())
+}
+
+/// Routes that require authentication (all other API endpoints).
+pub fn protected_router() -> Router<AppState> {
     Router::new()
         .nest("/thread", thread::router())
         .nest("/workspace", workspace::router())
-        .nest("/auth", auth::router())
         .nest("/generate", generate::router())
         .nest("/middleware", middleware::router())
         .nest("/util", util::router())
@@ -45,13 +50,6 @@ impl ApiResponse {
             data: serde_json::to_value(data).map_err(|e| ApiError::SerializationError(e))?,
             msg: None,
         })
-    }
-
-    pub fn msg(self, msg: String) -> Self {
-        Self {
-            msg: Some(msg),
-            ..self
-        }
     }
 }
 

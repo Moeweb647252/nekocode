@@ -68,9 +68,6 @@ function lastActivity(ws: WorkspaceResponse): number {
   return ws.threads.reduce((max, t) => Math.max(max, ts(t.updatedAt)), 0)
 }
 
-// id of the currently selected thread (or undefined) for row highlighting.
-const selectedId = computed(() => selectedThread?.value?.id)
-
 // Collapsed state keyed by workspace id. Absent = expanded (default).
 const collapsed = reactive<Record<number, boolean>>({})
 // Per-thread collapse state (top-level threads AND subthreads). Absent =

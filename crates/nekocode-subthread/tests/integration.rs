@@ -40,13 +40,6 @@ impl nekocode_core::provider::Provider for UnusedProvider {
     {
         panic!("UnusedProvider::stream_generate must not be called in tests")
     }
-    async fn generate(
-        &self,
-        _request: nekocode_core::types::GenerateRequest,
-    ) -> Result<nekocode_core::provider::ProviderResponse, nekocode_core::provider::ProviderError>
-    {
-        panic!("UnusedProvider::generate must not be called in tests")
-    }
 }
 
 #[async_trait::async_trait]

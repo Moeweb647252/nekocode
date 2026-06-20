@@ -1,5 +1,6 @@
 use crate::api::prelude::*;
 use axum::routing::post;
+use constant_time_eq::constant_time_eq;
 use nekocode_types::config::AuthenticationConfig;
 
 use crate::AppState;
@@ -22,7 +23,8 @@ pub async fn auth(State(mut state): State<AppState>, Json(payload): Json<Auth>) 
                 let lock = state.config.read().await;
                 lock.auth.clone()
             } {
-                if password == payload_password {
+                // Constant-time comparison to prevent timing side-channel attacks.
+                if constant_time_eq(password.as_bytes(), payload_password.as_bytes()) {
                     let token = toasty::create!(Token {
                         token: uuid::Uuid::new_v4().to_string(),
                         expires_at: jiff::Timestamp::now()

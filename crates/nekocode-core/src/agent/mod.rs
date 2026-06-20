@@ -173,12 +173,7 @@ impl Agent {
                 if response.usage.cache_hit {
                     total_usage.cache_hit = true;
                 }
-                let assistant_usage = Json(Usage {
-                    total_input: response.usage.total_input,
-                    total_output: response.usage.total_output,
-                    cache_hit: response.usage.cache_hit,
-                    cache_miss: response.usage.cache_miss,
-                });
+                let assistant_usage = Json(response.usage.clone());
                 create!(nekocode_entities::message::Message {
                     turn_id: this_turn.id,
                     message_index: message_index,

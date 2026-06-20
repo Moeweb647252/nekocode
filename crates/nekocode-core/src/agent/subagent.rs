@@ -735,7 +735,8 @@ async fn notify_any(notifies: &[Arc<Notify>]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{ProviderError, ProviderResponse, ProviderUsage};
+    use crate::provider::{ProviderError, ProviderResponse};
+    use nekocode_types::generate::Usage as ProviderUsage;
     use nekocode_types::generate::{AssistantMessage, StopReason};
     use nekocode_types::tool::{Tool, ToolError, ToolSpec};
     use std::sync::Mutex;
@@ -787,11 +788,6 @@ mod tests {
                     cache_miss: 10,
                 },
             })
-        }
-
-        async fn generate(&self, request: GenerateRequest) -> Result<ProviderResponse, ProviderError> {
-            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-            self.stream_generate(request, tx).await
         }
     }
 

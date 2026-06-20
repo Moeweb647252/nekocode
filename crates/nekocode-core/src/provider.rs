@@ -1,5 +1,5 @@
 use nekocode_types::{
-    generate::{self, AssistantMessage, StopReason},
+    generate::{self, AssistantMessage, StopReason, Usage},
     tool::ToolCall,
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -23,20 +23,11 @@ pub trait Provider: Send + Sync {
         request: GenerateRequest,
         sender: UnboundedSender<ProviderEvent>,
     ) -> Result<ProviderResponse, ProviderError>;
-
-    async fn generate(&self, request: GenerateRequest) -> Result<ProviderResponse, ProviderError>;
 }
 
 pub struct ProviderResponse {
     pub message: AssistantMessage,
-    pub usage: ProviderUsage,
-}
-
-pub struct ProviderUsage {
-    pub total_input: usize,
-    pub total_output: usize,
-    pub cache_hit: bool,
-    pub cache_miss: usize,
+    pub usage: Usage,
 }
 
 #[derive(Clone)]

@@ -5,6 +5,7 @@ use nekocode_core::agent::Agent;
 use tokio::sync::RwLock;
 
 use crate::api::prelude::*;
+use crate::api::thread::{MiddlewareBuildContext, build_middlewares};
 
 #[derive(Deserialize)]
 pub struct ActivateThread {
@@ -41,65 +42,23 @@ pub async fn activate_thread(
 
     let extensions = Arc::new(dashmap::DashMap::new());
 
-    let mut middlewares: Vec<Box<dyn nekocode_core::middleware::Middleware>> = Vec::new();
-
-    for i in thread.middlewares.get() {
-        // Skip disabled middlewares — they stay persisted but aren't built
-        // into the agent.
-        if !i.enabled {
-            continue;
-        }
-        match i.name.as_str() {
-            "shell" => {
-                let cfg = nekocode_shell::config::ShellConfig::from_value(&i.config);
-                middlewares.push(Box::new(nekocode_shell::Shell::new(extensions.clone(), cfg)));
-            }
-            "tool" => {
-                let cfg = nekocode_tool::config::FileConfig::from_value(&i.config);
-                middlewares.push(Box::new(nekocode_tool::ToolMiddleware::new(
-                    cfg,
-                    state.db.clone(),
-                    thread_id,
-                )));
-            }
-            "mcp" => {
-                let cfg = nekocode_mcp::config::McpConfig::from_value(&i.config);
-                middlewares.push(Box::new(nekocode_mcp::McpMiddleware::new(cfg)));
-            }
-            "skills" => {
-                let cfg = nekocode_skills::SkillsConfig::from_value(&i.config);
-                let skills_dir = {
-                    let config = state.config.read().await;
-                    std::path::PathBuf::from(config.skills.directory.clone())
-                };
-                middlewares.push(Box::new(nekocode_skills::SkillsMiddleware::new(
-                    cfg, skills_dir,
-                )));
-            }
-            "subthread" => {
-                let cfg = nekocode_subthread::SubthreadConfig::from_value(&i.config);
-                let activator = std::sync::Arc::new(
-                    crate::api::thread::subthread_activator::ApiThreadActivator {
-                        db: state.db.clone(),
-                        config: state.config.clone(),
-                        active_threads: state.active_threads.clone(),
-                        generate_states: state.generate_states.clone(),
-                    },
-                );
-                middlewares.push(Box::new(nekocode_subthread::SubthreadMiddleware::new(
-                    extensions.clone(),
-                    state.db.clone(),
-                    thread_id,
-                    thread.working_directory.clone(),
-                    cfg,
-                    activator,
-                )));
-            }
-            _ => {
-                tracing::warn!("Unknown middleware: {}", i.name);
-            }
-        }
-    }
+    let subthread_activator = std::sync::Arc::new(
+        crate::api::thread::subthread_activator::ApiThreadActivator {
+            db: state.db.clone(),
+            config: state.config.clone(),
+            active_threads: state.active_threads.clone(),
+            generate_states: state.generate_states.clone(),
+        },
+    );
+    let ctx = MiddlewareBuildContext {
+        db: state.db.clone(),
+        config: state.config.clone(),
+        extensions: extensions.clone(),
+        thread_id,
+        working_directory: thread.working_directory.clone(),
+        subthread_activator,
+    };
+    let middlewares = build_middlewares(&ctx, &thread.middlewares.get()).await;
 
     // Single atomic check-and-insert via the dashmap entry API. The redundant
     // pre-check that used to live here raced with concurrent activations and

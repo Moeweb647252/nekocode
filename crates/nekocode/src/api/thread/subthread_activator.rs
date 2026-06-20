@@ -6,6 +6,8 @@ use nekocode_entities::thread::Thread;
 use nekocode_subthread::activator::{ActivationOutcome, ThreadActivator};
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::api::thread::{MiddlewareBuildContext, build_middlewares};
+
 /// API-layer implementation of `ThreadActivator`. Builds a subthread's
 /// `Agent` from its DB middlewares (mirroring the `activate_thread` API
 /// endpoint's logic) and runs it to completion via `Agent::run_loop`.
@@ -48,59 +50,16 @@ impl ThreadActivator for ApiThreadActivator {
         let provider = nekocode_provider::build_from_config(&model_config.data);
 
         let extensions = Arc::new(dashmap::DashMap::new());
-        let mut middlewares: Vec<Box<dyn nekocode_core::middleware::Middleware>> = Vec::new();
 
-        for i in thread.middlewares.get() {
-            if !i.enabled {
-                continue;
-            }
-            match i.name.as_str() {
-                "shell" => {
-                    let cfg = nekocode_shell::config::ShellConfig::from_value(&i.config);
-                    middlewares.push(Box::new(nekocode_shell::Shell::new(
-                        extensions.clone(),
-                        cfg,
-                    )));
-                }
-                "tool" => {
-                    let cfg = nekocode_tool::config::FileConfig::from_value(&i.config);
-                    middlewares.push(Box::new(nekocode_tool::ToolMiddleware::new(
-                        cfg,
-                        self.db.clone(),
-                        subthread_id,
-                    )));
-                }
-                "mcp" => {
-                    let cfg = nekocode_mcp::config::McpConfig::from_value(&i.config);
-                    middlewares.push(Box::new(nekocode_mcp::McpMiddleware::new(cfg)));
-                }
-                "skills" => {
-                    let cfg = nekocode_skills::SkillsConfig::from_value(&i.config);
-                    let skills_dir = {
-                        let config = self.config.read().await;
-                        std::path::PathBuf::from(config.skills.directory.clone())
-                    };
-                    middlewares.push(Box::new(nekocode_skills::SkillsMiddleware::new(
-                        cfg,
-                        skills_dir,
-                    )));
-                }
-                "subthread" => {
-                    let cfg = nekocode_subthread::SubthreadConfig::from_value(&i.config);
-                    middlewares.push(Box::new(nekocode_subthread::SubthreadMiddleware::new(
-                        extensions.clone(),
-                        self.db.clone(),
-                        subthread_id,
-                        thread.working_directory.clone(),
-                        cfg,
-                        Arc::new(self.clone()),
-                    )));
-                }
-                _ => {
-                    tracing::warn!("Unknown middleware: {}", i.name);
-                }
-            }
-        }
+        let ctx = MiddlewareBuildContext {
+            db: self.db.clone(),
+            config: self.config.clone(),
+            extensions: extensions.clone(),
+            thread_id: subthread_id,
+            working_directory: thread.working_directory.clone(),
+            subthread_activator: Arc::new(self.clone()),
+        };
+        let middlewares = build_middlewares(&ctx, &thread.middlewares.get()).await;
 
         match self.active_threads.entry(subthread_id) {
             Occupied(entry) => {

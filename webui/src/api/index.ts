@@ -1,4 +1,5 @@
 export * from './types'
+/** @deprecated Login UI not yet implemented; auth backend is mounted. */
 export { login } from './auth'
 export {
   createThread,
@@ -8,7 +9,9 @@ export {
   getThread,
   updateThread,
 } from './thread'
-export { streamGenerate, watchStream } from './generate'
+export { streamGenerate } from './generate'
+/** @deprecated Not yet wired into any UI component. */
+export { watchStream } from './generate'
 export type { GenerateCallbacks } from './generate'
 export {
   createWorkspace,

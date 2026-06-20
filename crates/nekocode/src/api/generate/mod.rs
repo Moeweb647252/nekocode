@@ -36,6 +36,25 @@ pub enum Reason {
     Error,
 }
 
+/// Send a terminal `Stop` frame, tolerating serialization / socket errors so
+/// the upgrade future itself never panics.
+pub(super) async fn send_stop(
+    socket: &mut axum::extract::ws::WebSocket,
+    reason: Reason,
+    detail: serde_json::Value,
+) {
+    let Ok(payload) = serde_json::to_string(&WebSocketEvent::Stop(StopReason { reason, detail }))
+    else {
+        return;
+    };
+    // `String → ws::Message` via `TryInto` always succeeds (Text variant),
+    // but use ok() to avoid an irrefutable let...else pattern warning.
+    let Some(payload) = payload.try_into().ok() else {
+        return;
+    };
+    let _ = socket.send(payload).await;
+}
+
 pub fn router() -> axum::Router<AppState> {
     axum::Router::new()
         .route(

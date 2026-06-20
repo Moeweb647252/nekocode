@@ -7,7 +7,8 @@ use nekocode_types::{generate::StopReason, tool::ToolCall};
 pub mod types;
 
 use crate::sse::ServerSentEvents;
-use nekocode_core::provider::{ProviderError, ProviderEvent, ProviderUsage};
+use nekocode_core::provider::{ProviderError, ProviderEvent};
+use nekocode_types::generate::Usage as CoreUsage;
 use types::{ContentBlock, RawContentBlockDelta, RawMessageStreamEvent, Usage};
 
 struct PendingToolCall {
@@ -36,8 +37,8 @@ impl AnthropicStream {
     }
 
     /// Consume the accumulated usage stats from the stream, if any.
-    pub fn take_usage(&mut self) -> Option<ProviderUsage> {
-        self.usage.take().map(|u| ProviderUsage {
+    pub fn take_usage(&mut self) -> Option<CoreUsage> {
+        self.usage.take().map(|u| CoreUsage {
             total_input: u.input_tokens,
             total_output: u.output_tokens,
             cache_hit: u.cache_read_input_tokens > 0,

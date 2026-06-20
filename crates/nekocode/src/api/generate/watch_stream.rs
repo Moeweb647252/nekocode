@@ -1,5 +1,5 @@
 use crate::api::{
-    generate::{Reason, StopReason, ThreadId, WebSocketEvent},
+    generate::{Reason, ThreadId, WebSocketEvent},
     prelude::*,
 };
 use axum::{
@@ -21,23 +21,10 @@ pub async fn watch_stream(
             Ok(_) => (),
             Err(e) => {
                 error!("error handling watch stream: {e}");
-                send_stop(&mut ws, Reason::Error, e.to_string().into()).await;
+                super::send_stop(&mut ws, Reason::Error, e.to_string().into()).await;
             }
         }
     })
-}
-
-/// Send a terminal `Stop` frame, tolerating serialization / socket errors so
-/// the upgrade future itself never panics.
-async fn send_stop(ws: &mut WebSocket, reason: Reason, detail: serde_json::Value) {
-    let Ok(payload) = serde_json::to_string(&WebSocketEvent::Stop(StopReason { reason, detail }))
-    else {
-        return;
-    };
-    let Ok(payload) = payload.try_into() else {
-        return;
-    };
-    let _ = ws.send(ws::Message::Text(payload)).await;
 }
 
 pub async fn handle_websocket(
@@ -99,7 +86,7 @@ pub async fn handle_websocket(
                         .await?;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        send_stop(ws, Reason::Finished, serde_json::Value::Null).await;
+                        super::send_stop(ws, Reason::Finished, serde_json::Value::Null).await;
                         return Ok(());
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
@@ -121,7 +108,7 @@ pub async fn handle_websocket(
                 }
             }
             _ = cancellation.cancelled() => {
-                send_stop(ws, Reason::Interrupted, serde_json::Value::Null).await;
+                super::send_stop(ws, Reason::Interrupted, serde_json::Value::Null).await;
                 return Ok(());
             }
         }
