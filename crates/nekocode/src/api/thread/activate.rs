@@ -38,7 +38,11 @@ pub async fn activate_thread(
             "Model config not found: {}",
             thread.model
         )))?;
-    let provider = nekocode_provider::build_from_config(&model_config.data);
+    // Build the provider once and share it via Arc — both the middleware-build
+    // context (for the subagent middleware) and the Agent struct itself need
+    // the same provider instance.
+    let provider: Arc<dyn nekocode_core::provider::Provider> =
+        Arc::from(nekocode_provider::build_from_config(&model_config.data));
 
     let extensions = Arc::new(dashmap::DashMap::new());
 
@@ -57,6 +61,7 @@ pub async fn activate_thread(
         thread_id,
         working_directory: thread.working_directory.clone(),
         subthread_activator,
+        provider: provider.clone(),
     };
     let middlewares = build_middlewares(&ctx, &thread.middlewares.get()).await;
 
@@ -71,7 +76,7 @@ pub async fn activate_thread(
                 thread_id,
                 db: state.db.clone(),
                 middlewares: Arc::new(middlewares),
-                provider: Arc::from(provider),
+                provider,
                 extensions,
             })));
             ApiResponse::ok(())
