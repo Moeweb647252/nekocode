@@ -1,27 +1,15 @@
 use std::{path::PathBuf, sync::Arc};
 
-use axum::Router;
 use clap::Parser;
-use nekocode_core::agent::Agent;
+use nekocode::AppState;
 use nekocode_types::config::Config;
 use tokio::sync::RwLock;
 use tracing::info;
-
-mod api;
 
 #[derive(clap::Parser)]
 struct Args {
     #[arg(short, long)]
     config_path: Option<String>,
-}
-
-#[derive(Clone)]
-pub struct AppState {
-    db: toasty::Db,
-    config: Arc<RwLock<Config>>,
-    generate_states:
-        Arc<dashmap::DashMap<api::generate::ThreadId, Arc<api::generate::GenerateState>>>,
-    active_threads: Arc<dashmap::DashMap<api::generate::ThreadId, Arc<RwLock<Agent>>>>,
 }
 
 #[tokio::main]
@@ -68,18 +56,7 @@ async fn main() {
         active_threads: Arc::new(dashmap::DashMap::new()),
     };
 
-    let router = Router::new()
-        .nest(
-            "/api",
-            api::public_router().merge(
-                api::protected_router()
-                    .layer(axum::middleware::from_fn_with_state(
-                        app_state.clone(),
-                        api::auth_middleware,
-                    )),
-            ),
-        )
-        .with_state(app_state);
+    let router = nekocode::build_router(app_state);
     axum::serve(listener, router)
         .await
         .expect("Failed to serve application");

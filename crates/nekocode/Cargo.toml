@@ -3,6 +3,14 @@ name = "nekocode"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "nekocode"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nekocode"
+path = "src/main.rs"
+
 [dependencies]
 tokio.workspace = true
 toasty.workspace = true
@@ -34,3 +42,7 @@ nekocode-skills.workspace = true
 nekocode-subthread.workspace = true
 async-trait.workspace = true
 constant_time_eq = "0.3"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http = "1.0"
