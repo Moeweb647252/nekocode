@@ -16,3 +16,6 @@ dashmap.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 sdd.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

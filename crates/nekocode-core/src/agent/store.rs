@@ -317,3 +317,105 @@ pub async fn run_loop_core(
     Ok((index, total_usage))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::test_mocks::{text_msg, toolcall_msg, EchoMiddleware, MockProvider, OneShotRegenerateMiddleware};
+    use crate::middleware::{AgentControlFlow, Middleware};
+    use crate::types::GenerateRequest;
+    use nekocode_types::generate::MessageContent;
+    use nekocode_types::tool::ToolRegistry;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn text_only_response() {
+        let store = InMemoryMessageStore::new(vec![]);
+        store
+            .push_user_message(MessageContent::Text { content: "hello".into() })
+            .await
+            .unwrap();
+
+        let provider = Arc::new(MockProvider::new(vec![text_msg("world")]));
+        let request = GenerateRequest {
+            messages: store.current_messages().await.unwrap(),
+            ..Default::default()
+        };
+
+        let (_, usage) = run_loop_core(&store, provider, &[], &None, None, request, 0).await.unwrap();
+
+        assert!(usage.total_input > 0);
+        let messages = store.current_messages().await.unwrap();
+        assert_eq!(messages.len(), 2); // user + assistant
+    }
+
+    #[tokio::test]
+    async fn tool_call_loop() {
+        let store = InMemoryMessageStore::new(vec![]);
+        store
+            .push_user_message(MessageContent::Text { content: "run a tool".into() })
+            .await
+            .unwrap();
+
+        let provider = Arc::new(MockProvider::new(vec![
+            toolcall_msg("c1", "echo", serde_json::json!({"value": "ping"})),
+            text_msg("done"),
+        ]));
+
+        let request = GenerateRequest {
+            messages: store.current_messages().await.unwrap(),
+            ..Default::default()
+        };
+
+        let result = run_loop_core(
+            &store,
+            provider,
+            &[Box::new(EchoMiddleware)],
+            &None,
+            None,
+            request,
+            0,
+        )
+        .await;
+
+        assert!(result.is_ok(), "run_loop_core failed: {:?}", result.err());
+        let messages = store.current_messages().await.unwrap();
+        // user + assistant(toolcall) + toolresult + assistant(text)
+        assert_eq!(messages.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn middleware_generate_with() {
+        let store = InMemoryMessageStore::new(vec![]);
+        store
+            .push_user_message(MessageContent::Text { content: "hello".into() })
+            .await
+            .unwrap();
+
+        let provider = Arc::new(MockProvider::new(vec![
+            text_msg("first"),
+            text_msg("second"),
+        ]));
+
+        // OneShotRegenerateMiddleware fires GenerateWith on the first
+        // after_generate, then leaves flow as Output (its default) on the
+        // second call — this exercises the outer loop exactly once.
+        let middlewares: Vec<Box<dyn Middleware>> = vec![Box::new(
+            OneShotRegenerateMiddleware {
+                fired: std::sync::Mutex::new(false),
+                inject: "injected".into(),
+            },
+        )];
+
+        let request = GenerateRequest {
+            messages: store.current_messages().await.unwrap(),
+            ..Default::default()
+        };
+
+        let result = run_loop_core(&store, provider, &middlewares, &None, None, request, 0).await;
+        assert!(result.is_ok(), "run_loop_core failed: {:?}", result.err());
+        let messages = store.current_messages().await.unwrap();
+        // user + first assistant + injected middleware message + second assistant
+        assert_eq!(messages.len(), 4);
+    }
+}
+

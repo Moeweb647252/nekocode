@@ -59,7 +59,7 @@ impl IntoResponse for ApiResponse {
     }
 }
 
-async fn auth_middleware_inner(
+pub(crate) async fn auth_middleware_inner(
     mut state: AppState,
     headers: &axum::http::HeaderMap,
 ) -> Result<bool, ApiError> {

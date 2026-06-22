@@ -1,6 +1,8 @@
 pub mod error;
 pub mod store;
 pub mod subagent;
+#[cfg(test)]
+pub(crate) mod test_mocks;
 use std::{any::Any, sync::Arc};
 
 use anyhow::anyhow;

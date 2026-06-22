@@ -583,3 +583,114 @@ fn parse_shell_id(params: &serde_json::Value) -> Result<u32, ToolError> {
             ToolError::InvalidParameters("Missing or invalid 'shell_id' parameter".into())
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use serde_json::json;
+
+    /// Helper to build a default OnceShellTool.
+    fn once_tool() -> OnceShellTool {
+        OnceShellTool { config: Arc::new(ShellConfig::default()) }
+    }
+
+    #[tokio::test]
+    async fn echo_returns_stdout() {
+        let tool = once_tool();
+        let result = tool.call(json!({"command": "echo hello world"})).await.unwrap();
+        assert_eq!(result["exit_code"], 0);
+        let out = result["stdout"].as_str().unwrap_or("");
+        assert!(out.trim().contains("hello world"), "stdout: {out:?}");
+    }
+
+    #[tokio::test]
+    async fn true_exit_is_ok() {
+        let tool = once_tool();
+        let result = tool.call(json!({"command": "true"})).await.unwrap();
+        assert_eq!(result["exit_code"], 0);
+    }
+
+    #[tokio::test]
+    async fn false_exit_is_nonzero() {
+        let tool = once_tool();
+        let result = tool.call(json!({"command": "false"})).await.unwrap();
+        assert_eq!(result["exit_code"], 1);
+    }
+
+    #[tokio::test]
+    async fn stderr_is_captured() {
+        let tool = once_tool();
+        let result = tool.call(json!({"command": "echo err >&2"})).await.unwrap();
+        let stderr = result["stderr"].as_str().unwrap_or("");
+        assert!(!stderr.trim().is_empty(), "expected non-empty stderr");
+    }
+
+    #[tokio::test]
+    async fn missing_command_returns_error() {
+        let tool = once_tool();
+        let result = tool.call(json!({})).await;
+        assert!(result.is_err(), "expected InvalidParameters error");
+    }
+
+    #[tokio::test]
+    async fn spec_returns_expected_name() {
+        let tool = once_tool();
+        let spec = tool.spec();
+        assert_eq!(spec.name, "shell");
+        assert!(spec.parameter_schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("command")));
+    }
+
+    #[tokio::test]
+    async fn working_directory_is_applied() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
+        let tool = OnceShellTool {
+            config: Arc::new(ShellConfig {
+                working_directory: Some(dir_path.to_string_lossy().to_string()),
+                ..Default::default()
+            }),
+        };
+        let result = tool.call(json!({"command": "pwd"})).await.unwrap();
+        let out = result["stdout"].as_str().unwrap_or("");
+        assert!(
+            out.trim() == dir_path.to_string_lossy(),
+            "expected cwd={:?}, got stdout={out:?}",
+            dir_path,
+        );
+    }
+
+    #[tokio::test]
+    async fn env_vars_are_applied() {
+        use std::collections::HashMap;
+        let tool = OnceShellTool {
+            config: Arc::new(ShellConfig {
+                envs: HashMap::from([("MY_VAR".into(), "hello_world".into())]),
+                ..Default::default()
+            }),
+        };
+        let result = tool.call(json!({"command": "echo $MY_VAR"})).await.unwrap();
+        let out = result["stdout"].as_str().unwrap_or("");
+        assert!(out.trim().contains("hello_world"), "stdout: {out:?}");
+    }
+
+    #[tokio::test]
+    async fn timeout_kills_command() {
+        let tool = OnceShellTool {
+            config: Arc::new(ShellConfig {
+                timeout_secs: Some(1),
+                ..Default::default()
+            }),
+        };
+        let result = tool.call(json!({"command": "sleep 10"})).await;
+        assert!(result.is_err(), "expected timeout error");
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("timed out"),
+            "expected timeout, got: {err:?}",
+        );
+    }
+}

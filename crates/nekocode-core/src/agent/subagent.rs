@@ -589,138 +589,10 @@ async fn notify_any(notifies: &[Arc<Notify>]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{ProviderError, ProviderResponse};
-    use nekocode_types::generate::Usage as ProviderUsage;
-    use nekocode_types::generate::{AssistantMessage, StopReason};
-    use nekocode_types::tool::{Tool, ToolError, ToolSpec};
+    use crate::agent::test_mocks::{text_msg, toolcall_msg, EchoMiddleware, InjectMiddleware, MockProvider, OneShotRegenerateMiddleware};
+    use crate::agent::store::MessageStore;
+    use crate::middleware::AgentControlFlow;
     use std::sync::Mutex;
-
-    /// Mock provider that returns a scripted queue of `AssistantMessage`s,
-    /// one per `stream_generate`/`generate` call. Thread-safe via `Mutex`.
-    #[derive(Clone)]
-    struct MockProvider {
-        /// Each entry is the assistant message to return for the nth call.
-        responses: Arc<Mutex<Vec<AssistantMessage>>>,
-    }
-
-    impl MockProvider {
-        fn new(responses: Vec<AssistantMessage>) -> Self {
-            Self {
-                responses: Arc::new(Mutex::new(responses)),
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl Provider for MockProvider {
-        async fn stream_generate(
-            &self,
-            _request: GenerateRequest,
-            sender: UnboundedSender<ProviderEvent>,
-        ) -> Result<ProviderResponse, ProviderError> {
-            let msg = {
-                let mut g = self.responses.lock().unwrap();
-                if g.is_empty() {
-                    return Err(ProviderError::Other(anyhow!("mock exhausted")));
-                }
-                g.remove(0)
-            };
-            // Emit a Content event per text block so the forwarding path is
-            // exercised, then MessageEnd.
-            for block in &msg.blocks {
-                if let AssistantContentBlock::Text { content, .. } = block {
-                    let _ = sender.send(ProviderEvent::Content(content.clone()));
-                }
-            }
-            let _ = sender.send(ProviderEvent::MessageEnd(StopReason::Stop));
-            Ok(ProviderResponse {
-                message: msg,
-                usage: ProviderUsage {
-                    total_input: 10,
-                    total_output: 5,
-                    cache_hit: false,
-                    cache_miss: 10,
-                },
-            })
-        }
-    }
-
-    fn text_msg(s: &str) -> AssistantMessage {
-        AssistantMessage {
-            blocks: vec![AssistantContentBlock::Text {
-                content: s.to_string(),
-                reasoning_content: None,
-            }],
-        }
-    }
-
-    fn toolcall_msg(id: &str, name: &str, args: serde_json::Value) -> AssistantMessage {
-        AssistantMessage {
-            blocks: vec![AssistantContentBlock::ToolCall(nekocode_types::tool::ToolCall {
-                id: id.to_string(),
-                name: name.to_string(),
-                args,
-            })],
-        }
-    }
-
-    /// A trivial tool that echoes its `value` parameter back.
-    struct EchoTool;
-    #[async_trait::async_trait]
-    impl Tool for EchoTool {
-        fn spec(&self) -> ToolSpec {
-            ToolSpec {
-                name: "echo".to_string(),
-                description: "echo the value parameter".to_string(),
-                parameter_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": { "value": { "type": "string" } },
-                    "required": ["value"]
-                }),
-            }
-        }
-        async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
-            Ok(params)
-        }
-    }
-
-    /// Middleware that registers the echo tool.
-    struct EchoToolMiddleware;
-    #[async_trait::async_trait]
-    impl Middleware for EchoToolMiddleware {
-        async fn before_generate(
-            &self,
-            _req: &mut GenerateRequest,
-            registry: &mut ToolRegistry,
-        ) -> Result<(), anyhow::Error> {
-            registry.insert("echo".into(), Arc::new(EchoTool));
-            Ok(())
-        }
-    }
-
-    /// Middleware that, on the first `after_generate`, injects a follow-up
-    /// middleware message to exercise the outer loop.
-    struct OneShotRegenerateMiddleware {
-        fired: Arc<Mutex<bool>>,
-        inject: String,
-    }
-    #[async_trait::async_trait]
-    impl Middleware for OneShotRegenerateMiddleware {
-        async fn after_generate(
-            &self,
-            _resp: &GenerateResponse,
-            flow: &mut AgentControlFlow,
-        ) -> Result<(), anyhow::Error> {
-            let mut g = self.fired.lock().unwrap();
-            if !*g {
-                *g = true;
-                *flow = AgentControlFlow::GenerateWith(MessageContent::Text {
-                    content: self.inject.clone(),
-                });
-            }
-            Ok(())
-        }
-    }
 
     fn build(provider: Arc<dyn Provider>) -> SubAgent {
         SubAgentBuilder::new(provider).build()
@@ -749,7 +621,7 @@ mod tests {
             text_msg("done after echo"),
         ]));
         let sub = SubAgentBuilder::new(provider)
-            .middleware(Box::new(EchoToolMiddleware))
+            .middleware(Box::new(EchoMiddleware))
             .build();
         let summary = sub.run("go".to_string(), None).await.unwrap();
         // user, assistant(toolcall), toolresult, assistant(text)
@@ -778,10 +650,9 @@ mod tests {
             text_msg("first"),
             text_msg("second"),
         ]));
-        let fired = Arc::new(Mutex::new(false));
         let sub = SubAgentBuilder::new(provider)
             .middleware(Box::new(OneShotRegenerateMiddleware {
-                fired: fired.clone(),
+                fired: Mutex::new(false),
                 inject: "please continue".to_string(),
             }))
             .build();

@@ -7,6 +7,7 @@ use nekocode_types::{
 use crate::types::{GenerateRequest, GenerateResponse};
 
 /// How the agent run loop should proceed after `after_generate` runs.
+#[derive(Debug, Clone)]
 pub enum AgentControlFlow {
     /// Stop the run loop and return the current response to the client.
     Output,
