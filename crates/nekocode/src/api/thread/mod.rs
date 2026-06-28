@@ -31,9 +31,6 @@ pub(crate) struct MiddlewareBuildContext {
     pub thread_id: u64,
     pub working_directory: String,
     pub subthread_activator: Arc<dyn nekocode_subthread::activator::ThreadActivator>,
-    /// Provider for the parent thread, shared with subagents so
-    /// they use the same LLM backend.
-    pub provider: Arc<dyn nekocode_core::provider::Provider>,
 }
 
 /// Build the middleware chain from a thread's persisted middleware rows.
@@ -80,8 +77,7 @@ pub(crate) async fn build_middlewares(
                     std::path::PathBuf::from(config.skills.directory.clone())
                 };
                 middlewares.push(Box::new(nekocode_skills::SkillsMiddleware::new(
-                    cfg,
-                    skills_dir,
+                    cfg, skills_dir,
                 )));
             }
             "subthread" => {
@@ -93,14 +89,6 @@ pub(crate) async fn build_middlewares(
                     ctx.working_directory.clone(),
                     cfg,
                     ctx.subthread_activator.clone(),
-                )));
-            }
-            "subagent" => {
-                let cfg = nekocode_subagent::SubagentConfig::from_value(&i.config);
-                middlewares.push(Box::new(nekocode_subagent::SubagentMiddleware::new(
-                    ctx.extensions.clone(),
-                    ctx.provider.clone(),
-                    cfg,
                 )));
             }
             _ => {

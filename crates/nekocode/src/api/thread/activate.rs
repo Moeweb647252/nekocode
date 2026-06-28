@@ -61,7 +61,6 @@ pub async fn activate_thread(
         thread_id,
         working_directory: thread.working_directory.clone(),
         subthread_activator,
-        provider: provider.clone(),
     };
     let middlewares = build_middlewares(&ctx, &thread.middlewares.get()).await;
 

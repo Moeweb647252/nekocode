@@ -33,7 +33,7 @@ cd webui && pnpm type-check # vue-tsc type checking
 | Crate | Purpose |
 |-------|---------|
 | `nekocode` (bin) | Axum HTTP server: REST API + WebSocket for streaming. Reads config from `~/.config/nekocode/config.toml`. |
-| `nekocode-core` | Core orchestration: `Agent::run_loop` (middleware pipeline → provider calls), `SubAgent` (in-memory, DB-free variant), `Provider` trait (LLM abstraction), `Middleware` trait, `ToolRegistry`. |
+| `nekocode-core` | Core orchestration: `Agent::run_loop` (middleware pipeline → provider calls), `Provider` trait (LLM abstraction), `Middleware` trait, `ToolRegistry`. |
 | `nekocode-entities` | Database models via Toasty ORM: `Thread`, `Message`, `Turn`, `Token`, `Middleware`. `prepare_db()` opens SQLite. |
 | `nekocode-types` | Shared types: `Config` (TOML deser), `StreamEvent`/`StreamEventData` (SSE/WS events), `ToolCall`/`ToolCallResult`/`ToolSpec`, `Tool`/`ToolRegistry`. |
 | `nekocode-provider` | LLM backend implementations (DeepSeek, Anthropic, OpenAI-compatible) + SSE client (`EventSource` trait on `reqwest::Response`). |
@@ -48,8 +48,6 @@ cd webui && pnpm type-check # vue-tsc type checking
 ## Key patterns
 
 - **Agent run loop** (`crates/nekocode-core/src/agent/mod.rs`): Takes user input, fetches thread messages from DB, then loops: runs `before_generate` middleware → calls provider `stream_generate` → converts events → runs `after_generate` middleware. Middleware can set `AgentControlFlow::GenerateWith(MessageContent)` to re-invoke the provider with an injected middleware message. DB → provider-message conversion is done inline in `run_loop` (there is no `collect_db_messages` function).
-
-- **SubAgent** (`crates/nekocode-core/src/agent/subagent.rs`): Lightweight, in-memory counterpart of `Agent::run_loop`. Never touches the database — conversation history lives in an in-memory `Vec<Message>`. Supports two execution modes: `SubAgent::run` (synchronous await) and `SubAgent::spawn` (background tokio task with `SubAgentRegistry` tracking). The two run loops MUST stay in lockstep when the agent protocol evolves.
 
 - **`Provider` trait** (`crates/nekocode-core/src/provider.rs`): `stream_generate` takes a `GenerateRequest` + unbounded sender, streams `ProviderEvent` variants (content deltas, reasoning, tool calls).
 

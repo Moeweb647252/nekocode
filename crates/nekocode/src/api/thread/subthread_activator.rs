@@ -20,10 +20,8 @@ use crate::api::thread::{MiddlewareBuildContext, build_middlewares};
 pub struct ApiThreadActivator {
     pub db: toasty::Db,
     pub config: Arc<tokio::sync::RwLock<nekocode_types::config::Config>>,
-    pub active_threads:
-        Arc<dashmap::DashMap<u64, Arc<tokio::sync::RwLock<Agent>>>>,
-    pub generate_states:
-        Arc<dashmap::DashMap<u64, Arc<crate::api::generate::GenerateState>>>,
+    pub active_threads: Arc<dashmap::DashMap<u64, Arc<tokio::sync::RwLock<Agent>>>>,
+    pub generate_states: Arc<dashmap::DashMap<u64, Arc<crate::api::generate::GenerateState>>>,
 }
 
 #[async_trait::async_trait]
@@ -34,9 +32,7 @@ impl ThreadActivator for ApiThreadActivator {
             .first()
             .exec(&mut self.db.clone())
             .await?
-            .ok_or_else(|| {
-                anyhow::anyhow!("Subthread not found: {}", subthread_id)
-            })?;
+            .ok_or_else(|| anyhow::anyhow!("Subthread not found: {}", subthread_id))?;
         let model_configs = {
             let config = self.config.read().await;
             config.models.clone()
@@ -44,9 +40,7 @@ impl ThreadActivator for ApiThreadActivator {
         let model_config = model_configs
             .into_iter()
             .find(|cfg| cfg.name == thread.model)
-            .ok_or_else(|| {
-                anyhow::anyhow!("Model config not found: {}", thread.model)
-            })?;
+            .ok_or_else(|| anyhow::anyhow!("Model config not found: {}", thread.model))?;
         // Build the provider once and share it via Arc — both the
         // middleware-build context (for the subagent middleware) and the
         // Agent struct itself need the same provider instance.
@@ -62,7 +56,6 @@ impl ThreadActivator for ApiThreadActivator {
             thread_id: subthread_id,
             working_directory: thread.working_directory.clone(),
             subthread_activator: Arc::new(self.clone()),
-            provider: provider.clone(),
         };
         let middlewares = build_middlewares(&ctx, &thread.middlewares.get()).await;
 
@@ -109,10 +102,7 @@ impl ThreadActivator for ApiThreadActivator {
     ) -> Result<(), anyhow::Error> {
         // Agent::run_loop takes &self; deref the Arc for the call duration.
         let summary = (*agent).run_loop(prompt, sender).await?;
-        tracing::debug!(
-            "subthread run_loop finished; usage: {:?}",
-            summary.usage
-        );
+        tracing::debug!("subthread run_loop finished; usage: {:?}", summary.usage);
         Ok(())
     }
 
