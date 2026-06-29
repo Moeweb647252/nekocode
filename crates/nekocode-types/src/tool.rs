@@ -230,9 +230,9 @@ mod tests {
     /// must never return an error again.
     #[test]
     fn message_with_error_tool_result_serializes() {
-        use crate::generate::Message;
+        use crate::generate::MessageType;
 
-        let msg = Message::ToolCallResult(super::ToolCallResult {
+        let msg = MessageType::ToolCallResult(super::ToolCallResult {
             id: "call_1".into(),
             result: ToolCallResultInner::Error {
                 error: "command timed out after 5s".into(),
@@ -244,9 +244,9 @@ mod tests {
         assert!(s.contains("command timed out"), "error payload missing: {s}");
 
         // Round-trips too (the DB reads it back this way).
-        let back: Message = serde_json::from_str(&s).unwrap();
+        let back: MessageType = serde_json::from_str(&s).unwrap();
         match back {
-            Message::ToolCallResult(r) => match r.result {
+            MessageType::ToolCallResult(r) => match r.result {
                 ToolCallResultInner::Error { error } => {
                     assert_eq!(error, "command timed out after 5s");
                 }

@@ -73,6 +73,7 @@ pub async fn activate_thread(
         Vacant(entry) => {
             entry.insert(Arc::new(RwLock::new(Agent {
                 thread_id,
+                working_directory: thread.working_directory.clone(),
                 db: state.db.clone(),
                 middlewares: Arc::new(middlewares),
                 provider,

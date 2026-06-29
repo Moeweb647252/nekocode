@@ -5,7 +5,7 @@ use nekocode_core::{
 use nekocode_types::generate::Usage;
 use nekocode_types::{
     config::{DeepSeekConfig, DeepSeekEndpoint},
-    generate::{AssistantContentBlock, AssistantMessage, Message, MessageContent},
+    generate::{AssistantContentBlock, AssistantMessage, MessageContent, MessageType},
     tool::{ToolCall, ToolCallResult, ToolCallResultInner, ToolSpec},
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -312,15 +312,19 @@ fn message_text(content: &MessageContent) -> String {
     }
 }
 
-fn convert_to_openai_message(msg: &Message) -> ChatCompletionMessageParam {
+fn convert_to_openai_message(msg: &MessageType) -> ChatCompletionMessageParam {
     match msg {
-        Message::User(content) => ChatCompletionMessageParam::ChatCompletionUserMessageParam(
+        MessageType::User(blocks) => ChatCompletionMessageParam::ChatCompletionUserMessageParam(
             ChatCompletionUserMessageParam {
-                content: message_text(content),
+                content: blocks
+                    .iter()
+                    .map(message_text)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
                 name: None,
             },
         ),
-        Message::Assistant(assistant) => {
+        MessageType::Assistant(assistant) => {
             let mut content_parts = Vec::new();
             let mut reasoning_parts = Vec::new();
             let mut tool_calls = Vec::new();
@@ -358,7 +362,7 @@ fn convert_to_openai_message(msg: &Message) -> ChatCompletionMessageParam {
                 },
             )
         }
-        Message::MiddlewareMessage(content) => {
+        MessageType::MiddlewareMessage(content) => {
             ChatCompletionMessageParam::ChatCompletionUserMessageParam(
                 ChatCompletionUserMessageParam {
                     content: message_text(content),
@@ -366,7 +370,7 @@ fn convert_to_openai_message(msg: &Message) -> ChatCompletionMessageParam {
                 },
             )
         }
-        Message::ToolCallResult(result) => {
+        MessageType::ToolCallResult(result) => {
             ChatCompletionMessageParam::ChatCompletionToolMessageParam(
                 crate::parser::openaiv1::types::ChatCompletionToolMessageParam {
                     content: tool_result_text(result),
@@ -406,17 +410,22 @@ fn tool_result_text(result: &ToolCallResult) -> String {
     }
 }
 
-fn to_anthropic_message(msg: &Message) -> MessageParam {
+fn to_anthropic_message(msg: &MessageType) -> MessageParam {
     match msg {
-        Message::User(content) => MessageParam {
+        MessageType::User(blocks) => MessageParam {
             role: AnthropicRole::User,
-            content: MessageContentParam::Blocks(vec![ContentBlockParam::TextBlockParam(
-                TextBlockParam {
-                    text: message_text(content),
-                },
-            )]),
+            content: MessageContentParam::Blocks(
+                blocks
+                    .iter()
+                    .map(|b| {
+                        ContentBlockParam::TextBlockParam(TextBlockParam {
+                            text: message_text(b),
+                        })
+                    })
+                    .collect(),
+            ),
         },
-        Message::Assistant(assistant) => {
+        MessageType::Assistant(assistant) => {
             let mut blocks: Vec<ContentBlockParam> = Vec::new();
             for block in &assistant.blocks {
                 match block {
@@ -444,7 +453,7 @@ fn to_anthropic_message(msg: &Message) -> MessageParam {
                 content: MessageContentParam::Blocks(blocks),
             }
         }
-        Message::MiddlewareMessage(content) => MessageParam {
+        MessageType::MiddlewareMessage(content) => MessageParam {
             role: AnthropicRole::User,
             content: MessageContentParam::Blocks(vec![ContentBlockParam::TextBlockParam(
                 TextBlockParam {
@@ -452,7 +461,7 @@ fn to_anthropic_message(msg: &Message) -> MessageParam {
                 },
             )]),
         },
-        Message::ToolCallResult(result) => MessageParam {
+        MessageType::ToolCallResult(result) => MessageParam {
             role: AnthropicRole::User,
             content: MessageContentParam::Blocks(vec![ContentBlockParam::ToolResultBlockParam(
                 crate::parser::anthropic::types::ToolResultBlockParam {

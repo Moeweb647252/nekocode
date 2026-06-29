@@ -1,4 +1,5 @@
 mod stream_generate;
+pub(super) mod turn_io;
 mod watch_stream;
 
 use nekocode_core::agent::AgentEvent;

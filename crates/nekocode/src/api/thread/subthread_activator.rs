@@ -4,8 +4,10 @@ use dashmap::Entry::{Occupied, Vacant};
 use nekocode_core::agent::{Agent, AgentEvent};
 use nekocode_entities::thread::Thread;
 use nekocode_subthread::activator::{ActivationOutcome, ThreadActivator};
+use nekocode_types::generate::MessageContent;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::api::generate::turn_io;
 use crate::api::thread::{MiddlewareBuildContext, build_middlewares};
 
 /// API-layer implementation of `ThreadActivator`. Builds a subthread's
@@ -75,6 +77,7 @@ impl ThreadActivator for ApiThreadActivator {
             Vacant(entry) => {
                 let agent = Agent {
                     thread_id: subthread_id,
+                    working_directory: thread.working_directory.clone(),
                     db: self.db.clone(),
                     middlewares: Arc::new(middlewares),
                     provider,
@@ -100,10 +103,29 @@ impl ThreadActivator for ApiThreadActivator {
         prompt: String,
         sender: UnboundedSender<AgentEvent>,
     ) -> Result<(), anyhow::Error> {
-        // Agent::run_loop takes &self; deref the Arc for the call duration.
-        let summary = (*agent).run_loop(prompt, sender).await?;
-        tracing::debug!("subthread run_loop finished; usage: {:?}", summary.usage);
-        Ok(())
+        // Load history and persist results in the API layer; the agent itself
+        // is storage-free. Agent::run_loop takes &self; deref the Arc for the
+        // call duration.
+        let old_turns = turn_io::load_turn_context(&self.db, agent.thread_id).await?;
+        match (*agent)
+            .run_loop(
+                vec![MessageContent::Text { content: prompt }],
+                old_turns,
+                sender,
+            )
+            .await
+        {
+            Ok(turn) => {
+                turn_io::persist_turn(&self.db, agent.thread_id, turn).await?;
+                tracing::debug!("subthread run_loop finished");
+                Ok(())
+            }
+            // The agent already emitted the error as a stream event; discard the
+            // partial turn (today nothing consumes unfinished turns) and
+            // propagate the error so the subthread registry marks the run as
+            // Error and wakes any waiters.
+            Err(_partial) => Err(anyhow::anyhow!("subthread run_loop failed")),
+        }
     }
 
     async fn delete_subthread(&self, subthread_id: u64) -> Result<(), anyhow::Error> {

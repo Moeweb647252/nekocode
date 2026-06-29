@@ -13,7 +13,7 @@ pub struct Message {
     pub turn_id: u64,
     pub message_index: u64,
     #[serde(serialize_with = "serialize_json")]
-    pub content: Json<nekocode_types::generate::Message>,
+    pub content: Json<nekocode_types::generate::MessageType>,
     pub usage: Option<Json<nekocode_types::generate::Usage>>,
 
     #[update(jiff::Timestamp::now())]

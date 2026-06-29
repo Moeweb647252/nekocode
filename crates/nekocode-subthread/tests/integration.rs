@@ -50,6 +50,7 @@ impl ThreadActivator for NoopActivator {
         Ok(ActivationOutcome::AlreadyActivated(std::sync::Arc::new(
             nekocode_core::agent::Agent {
                 thread_id: 0,
+                working_directory: String::new(),
                 db: self.db.clone(),
                 middlewares: std::sync::Arc::new(Vec::new()),
                 provider: std::sync::Arc::new(UnusedProvider),

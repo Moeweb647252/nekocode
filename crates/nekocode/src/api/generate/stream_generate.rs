@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
 use axum::{extract::ws, response::Response};
+use nekocode_types::generate::MessageContent;
 use tracing::error;
 
 use crate::api::{
-    generate::{GenerateState, Reason, WebSocketEvent},
+    generate::{GenerateState, Reason, WebSocketEvent, turn_io},
     prelude::*,
 };
 
@@ -59,7 +60,18 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
     } else {
         bail!("thread not activated");
     };
-    let handle = tokio::spawn(async move { agent.run_loop(payload.user_input, tx).await });
+    // Load the thread's history here (not inside the agent) so a load failure
+    // is reported to the client as an Error frame rather than a socket drop.
+    let old_turns = turn_io::load_turn_context(&state.db, payload.thread_id)
+        .await
+        .map_err(|e| anyhow!("error loading turn context: {e}"))?;
+    let thread_id = payload.thread_id;
+    let user_input = payload.user_input;
+    let handle = tokio::spawn(async move {
+        agent
+            .run_loop(vec![MessageContent::Text { content: user_input }], old_turns, tx)
+            .await
+    });
 
     // Forward agent events to the client socket until the stream closes,
     // the client disconnects, or the generation is interrupted.
@@ -90,14 +102,31 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
 
     match result {
         Ok(()) => {
-            let summary = handle.await
-                .map_err(|e| anyhow!("error joining agent task: {e}"))??;
-            super::send_stop(
-                socket,
-                Reason::Finished,
-                serde_json::to_value(summary)?,
-            )
-            .await;
+            let run_result = handle
+                .await
+                .map_err(|e| anyhow!("error joining agent task: {e}"))?;
+            match run_result {
+                // Turn completed: persist it, then send a Finished frame
+                // carrying the aggregate usage directly as the detail payload.
+                Ok(turn) => {
+                    if let Err(e) = turn_io::persist_turn(&state.db, thread_id, turn.clone()).await {
+                        error!("error persisting turn {thread_id}: {e}");
+                    }
+                    super::send_stop(
+                        socket,
+                        Reason::Finished,
+                        serde_json::to_value(turn.usage)?,
+                    )
+                    .await;
+                }
+                // Run errored: the agent already emitted the error as a
+                // MessageEnd(Error) stream event (forwarded above). Discard the
+                // partial turn (today nothing consumes unfinished turns) and
+                // close the socket with an Error frame.
+                Err(_partial) => {
+                    super::send_stop(socket, Reason::Error, serde_json::Value::Null).await;
+                }
+            }
             Ok(())
         }
         // The forwarder errored (socket send failed, etc.). Abort the agent so

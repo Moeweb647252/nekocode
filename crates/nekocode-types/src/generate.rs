@@ -5,11 +5,24 @@ use crate::tool::{ToolCall, ToolCallResult};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 #[serde(rename_all = "camelCase")]
-pub enum Message {
-    User(MessageContent),
+pub enum MessageType {
+    User(Vec<MessageContent>),
     Assistant(AssistantMessage),
     MiddlewareMessage(MessageContent),
     ToolCallResult(ToolCallResult),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Message {
+    pub created_at: jiff::Timestamp,
+    pub data: MessageType,
+    /// Per-message token usage (assistant messages only). Held in memory so
+    /// the API layer can write it to the `Message.usage` DB column on persist.
+    /// Skipped from serde so the on-disk/wire `content` shape stays the bare
+    /// `MessageType` (see `nekocode-entities::message::Message.content`).
+    #[serde(skip)]
+    pub usage: Option<Usage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,4 +102,15 @@ pub struct Usage {
     pub total_output: usize,
     pub cache_hit: bool,
     pub cache_miss: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct Turn {
+    pub messages: Vec<Message>,
+    pub usage: Usage,
+    /// `true` when the run completed normally; `false` when it was interrupted
+    /// by an error (the `messages`/`usage` then reflect progress up to the
+    /// failure point). Carried in-memory so the API layer can persist it as the
+    /// `Turn.finished` DB column.
+    pub finished: bool,
 }
