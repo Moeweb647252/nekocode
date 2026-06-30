@@ -8,6 +8,7 @@ pub mod create;
 pub mod delete;
 pub mod get;
 pub mod list;
+pub mod subagent_factory;
 pub mod subthread_activator;
 pub mod update;
 
@@ -31,6 +32,7 @@ pub(crate) struct MiddlewareBuildContext {
     pub thread_id: u64,
     pub working_directory: String,
     pub subthread_activator: Arc<dyn nekocode_subthread::activator::ThreadActivator>,
+    pub provider: Arc<dyn nekocode_core::provider::Provider>,
 }
 
 /// Build the middleware chain from a thread's persisted middleware rows.
@@ -89,6 +91,46 @@ pub(crate) async fn build_middlewares(
                     ctx.working_directory.clone(),
                     cfg,
                     ctx.subthread_activator.clone(),
+                )));
+            }
+            "subagent" => {
+                let cfg = nekocode_subagent::SubagentConfig::from_value(&i.config);
+                // Build specs from the parent's enabled middleware rows,
+                // excluding "subagent" itself (prevents recursive self-
+                // registration; nesting is governed by depth+max_depth, not
+                // by omission here).
+                let specs: Vec<nekocode_core::middleware::MiddlewareSpec> = middleware_rows
+                    .iter()
+                    .filter(|r| r.enabled && r.name != "subagent")
+                    .map(|r| nekocode_core::middleware::MiddlewareSpec {
+                        name: r.name.clone(),
+                        config: r.config.0.clone(),
+                    })
+                    .collect();
+                let skills_dir = {
+                    let config = ctx.config.read().await;
+                    std::path::PathBuf::from(config.skills.directory.clone())
+                };
+                let factory = std::sync::Arc::new(
+                    crate::api::thread::subagent_factory::ApiSubagentMiddlewareFactory {
+                        db: ctx.db.clone(),
+                        skills_dir,
+                    },
+                );
+                middlewares.push(Box::new(nekocode_subagent::SubagentMiddleware::new(
+                    specs,
+                    factory,
+                    ctx.provider.clone(),
+                    ctx.extensions.clone(),
+                    ctx.db.clone(),
+                    ctx.working_directory.clone(),
+                    cfg,
+                    0,    // depth = 0 for the top-level parent
+                    true, // allow_nested = true at the root: the top-level
+                          // thread is not itself a subagent, so it is always
+                          // permitted to spawn its first-level subagents.
+                          // The depth gate + each child's own profile
+                          // allow_nested bound further nesting.
                 )));
             }
             _ => {

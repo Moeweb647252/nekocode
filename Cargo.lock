@@ -2334,6 +2334,7 @@ dependencies = [
  "nekocode-provider",
  "nekocode-shell",
  "nekocode-skills",
+ "nekocode-subagent",
  "nekocode-subthread",
  "nekocode-types",
  "scopeguard",

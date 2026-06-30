@@ -39,8 +39,8 @@ pub async fn activate_thread(
             thread.model
         )))?;
     // Build the provider once and share it via Arc — both the middleware-build
-    // context (for the subagent middleware) and the Agent struct itself need
-    // the same provider instance.
+    // context (for the subthread and subagent middlewares) and the Agent struct
+    // itself need the same provider instance.
     let provider: Arc<dyn nekocode_core::provider::Provider> =
         Arc::from(nekocode_provider::build_from_config(&model_config.data));
 
@@ -61,6 +61,7 @@ pub async fn activate_thread(
         thread_id,
         working_directory: thread.working_directory.clone(),
         subthread_activator,
+        provider: provider.clone(),
     };
     let middlewares = build_middlewares(&ctx, &thread.middlewares.get()).await;
 
