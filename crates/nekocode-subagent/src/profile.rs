@@ -41,36 +41,13 @@ impl ProfileCatalog {
     /// Load global then workspace, merging by name (workspace replaces).
     pub fn load(global_path: &Path, workspace_path: Option<&Path>) -> Result<Self, anyhow::Error> {
         let mut profiles: HashMap<String, SubagentProfile> = HashMap::new();
-        // Global first (missing file is OK → empty catalog).
-        if let Ok(content) = std::fs::read_to_string(global_path) {
-            let parsed: AgentsFile = toml::from_str(&content)?;
-            let mut seen = std::collections::HashSet::new();
-            for p in parsed.agents {
-                if p.name.is_empty() {
-                    anyhow::bail!("profile with empty name in {}", global_path.display());
-                }
-                if !seen.insert(p.name.clone()) {
-                    anyhow::bail!("duplicate profile name '{}' in {}", p.name, global_path.display());
-                }
-                profiles.insert(p.name.clone(), p);
-            }
-        }
-        // Workspace second (missing is OK → skip). Wholly replaces same-named
+        // Global first. A missing global file is OK (empty catalog); any other
+        // IO error (permission denied, path is a directory, …) is propagated.
+        ingest(global_path, &mut profiles)?;
+        // Workspace second. Missing is OK → skip. Wholly replaces same-named
         // global entries; intra-workspace duplicates are an error.
         if let Some(ws) = workspace_path {
-            if let Ok(content) = std::fs::read_to_string(ws) {
-                let parsed: AgentsFile = toml::from_str(&content)?;
-                let mut seen = std::collections::HashSet::new();
-                for p in parsed.agents {
-                    if p.name.is_empty() {
-                        anyhow::bail!("profile with empty name in {}", ws.display());
-                    }
-                    if !seen.insert(p.name.clone()) {
-                        anyhow::bail!("duplicate profile name '{}' in {}", p.name, ws.display());
-                    }
-                    profiles.insert(p.name.clone(), p);
-                }
-            }
+            ingest(ws, &mut profiles)?;
         }
         Ok(Self { profiles })
     }
@@ -80,6 +57,34 @@ impl ProfileCatalog {
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("profile '{}' not found", name))
     }
+}
+
+/// Parse one `agents.toml` file into `profiles`. A missing file is a no-op
+/// (returns `Ok(())`); any other IO error is propagated. Intra-file
+/// duplicate profile names and empty names are errors. When a profile name
+/// already exists in `profiles` (e.g. a workspace entry shadowing a global
+/// one), the new entry wholly replaces it.
+fn ingest(
+    path: &Path,
+    profiles: &mut HashMap<String, SubagentProfile>,
+) -> Result<(), anyhow::Error> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(anyhow::Error::new(e)),
+    };
+    let parsed: AgentsFile = toml::from_str(&content)?;
+    let mut seen = std::collections::HashSet::new();
+    for p in parsed.agents {
+        if p.name.is_empty() {
+            anyhow::bail!("profile with empty name in {}", path.display());
+        }
+        if !seen.insert(p.name.clone()) {
+            anyhow::bail!("duplicate profile name '{}' in {}", p.name, path.display());
+        }
+        profiles.insert(p.name.clone(), p);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
