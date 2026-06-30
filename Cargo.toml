@@ -38,3 +38,4 @@ nekocode-file = { path = "crates/nekocode-file" }
 nekocode-mcp = { path = "crates/nekocode-mcp" }
 nekocode-skills = { path = "crates/nekocode-skills" }
 nekocode-subthread = { path = "crates/nekocode-subthread" }
+nekocode-subagent = { path = "crates/nekocode-subagent" }

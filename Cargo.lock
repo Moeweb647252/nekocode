@@ -2470,6 +2470,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "nekocode-subagent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dashmap",
+ "futures-util",
+ "jiff",
+ "nekocode-core",
+ "nekocode-types",
+ "serde",
+ "serde_json",
+ "toasty",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "nekocode-subthread"
 version = "0.1.0"
 dependencies = [
