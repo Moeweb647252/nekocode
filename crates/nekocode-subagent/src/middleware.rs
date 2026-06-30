@@ -3,9 +3,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use nekocode_core::middleware::{Middleware, MiddlewareSpec};
 use nekocode_core::provider::Provider;
-use nekocode_types::config::Config;
 use nekocode_types::tool::ToolRegistry;
-use tokio::sync::RwLock;
 
 use crate::factory::SubagentMiddlewareFactory;
 use crate::profile::ProfileCatalog;
@@ -23,7 +21,6 @@ pub struct SubagentContext {
     pub specs: Vec<MiddlewareSpec>,
     pub factory: Arc<dyn SubagentMiddlewareFactory>,
     pub parent_provider: Arc<dyn Provider>,
-    pub parent_config: Arc<RwLock<Config>>,
     pub parent_working_directory: String,
     pub parent_db: toasty::Db,
     pub catalog: Arc<ProfileCatalog>,
@@ -37,16 +34,14 @@ pub struct SubagentContext {
 /// per-parent `SubagentRegistry` to `Agent.extensions["subagent"]`.
 pub struct SubagentMiddleware {
     ctx: SubagentContext,
-    #[allow(dead_code)]
-    registry: Arc<SubagentRegistry>,
 }
 
 impl SubagentMiddleware {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         specs: Vec<MiddlewareSpec>,
         factory: Arc<dyn SubagentMiddlewareFactory>,
         parent_provider: Arc<dyn Provider>,
-        parent_config: Arc<RwLock<Config>>,
         parent_extensions: Arc<DashMap<String, Box<dyn std::any::Any + Send + Sync>>>,
         parent_db: toasty::Db,
         parent_working_directory: String,
@@ -73,7 +68,6 @@ impl SubagentMiddleware {
             specs,
             factory,
             parent_provider,
-            parent_config,
             parent_working_directory,
             parent_db,
             catalog,
@@ -81,7 +75,7 @@ impl SubagentMiddleware {
             max_depth: config.max_depth,
             allow_nested,
         };
-        Self { ctx, registry }
+        Self { ctx }
     }
 }
 

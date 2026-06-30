@@ -104,31 +104,38 @@ impl Tool for SpawnSubagentTool {
             ));
         }
 
+        // Compute the child's working directory BEFORE building the child
+        // middleware: a profile may override `working_directory`, and the
+        // child's ProfileCatalog must load relative to the child's directory,
+        // not the parent's.
+        let working_directory = profile
+            .working_directory
+            .clone()
+            .unwrap_or_else(|| self.ctx.parent_working_directory.clone());
+
         // Construct the child's own SubagentMiddleware (at depth+1, with the
         // child profile's allow_nested). It registers the subagent tools for
         // the child so it can itself spawn (subject to the gates above).
+        // Pass `selected_specs` (parent specs ∩ profile.middlewares), NOT the
+        // parent's full spec set, so the intersection gate holds at depth >= 2;
+        // and pass the computed `working_directory` so the child catalog loads
+        // from the right place.
         let child_subagent_mw = SubagentMiddleware::new(
-            self.ctx.specs.clone(),
+            selected_specs.clone(),
             self.ctx.factory.clone(),
             self.ctx.parent_provider.clone(),
-            self.ctx.parent_config.clone(),
             child_extensions.clone(),
             self.ctx.parent_db.clone(),
-            self.ctx.parent_working_directory.clone(),
+            working_directory.clone(),
             crate::SubagentConfig { max_depth: self.ctx.max_depth },
             self.ctx.depth + 1,
             profile.allow_nested,
         );
         child_middlewares.push(Box::new(child_subagent_mw));
 
-        let working_directory = profile
-            .working_directory
-            .clone()
-            .unwrap_or_else(|| self.ctx.parent_working_directory.clone());
-
         let child = Agent {
             thread_id: agent_id,
-            working_directory: working_directory.clone(),
+            working_directory,
             db: self.ctx.parent_db.clone(),
             middlewares: Arc::new(child_middlewares),
             provider: self.ctx.parent_provider.clone(),

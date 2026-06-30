@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use nekocode_types::tool::ToolError;
 
@@ -53,8 +52,8 @@ pub(crate) fn parse_timeout(params: &serde_json::Value) -> Result<f64, ToolError
         .get("timeout")
         .and_then(|v| v.as_f64())
         .ok_or_else(|| ToolError::InvalidParameters("Missing or invalid 'timeout' parameter".into()))?;
-    if t <= 0.0 {
-        return Err(ToolError::InvalidParameters("'timeout' must be positive".into()));
+    if !t.is_finite() || t <= 0.0 {
+        return Err(ToolError::InvalidParameters("'timeout' must be positive and finite".into()));
     }
     Ok(t)
 }
@@ -84,10 +83,4 @@ pub(crate) async fn notify_any(notifies: &[Arc<tokio::sync::Notify>]) {
         })
         .collect();
     let _ = select_all(futures).await;
-}
-
-// Silence unused-import warning for Duration until wait tools are wired.
-#[allow(dead_code)]
-fn _ensure_duration_used() -> Duration {
-    Duration::from_secs(0)
 }
