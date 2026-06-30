@@ -71,10 +71,12 @@ pub async fn delete_threads_cascade(
         }
     }
 
-    // Abort any in-flight subthread background tasks owned by each thread in
-    // the set, then evict the thread itself from the caches. Iterate in reverse
-    // (children first) so a subthread's own sub-subthread tasks are aborted
-    // before the subthread itself.
+    // Abort any in-flight subthread and subagent background tasks owned by
+    // each thread in the set, then evict the thread itself from the caches.
+    // Iterate in reverse (children first) so a subthread's own sub-subthread
+    // tasks are aborted before the subthread itself. Subagent tasks are
+    // purely in-memory (no DB cascade), so abort_all_and_clear is the full
+    // cleanup.
     for id in to_delete.iter().rev() {
         abort_subthread_tasks(active_threads, *id).await;
         abort_subagent_tasks(active_threads, *id).await;
