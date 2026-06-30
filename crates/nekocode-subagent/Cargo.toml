@@ -20,4 +20,5 @@ futures-util.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+nekocode-entities.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

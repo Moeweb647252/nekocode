@@ -1,9 +1,10 @@
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use dashmap::DashMap;
 use nekocode_types::generate::{Message, Usage};
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 #[derive(Debug, Clone)]
@@ -109,8 +110,11 @@ impl SubagentRegistry {
         } else {
             return;
         };
-        // result is Arc<RwLock<Option<..>>>; blocking write is fine — no await.
-        *result_slot.blocking_write() = Some(result);
+        // result is Arc<std::sync::RwLock<Option<..>>>; a sync write is fine
+        // (no await while holding the guard) and, unlike tokio's
+        // `blocking_write`, does not panic when called from an async context
+        // (the runner awaits `run_loop` and Task 6 spawns it on a runtime).
+        *result_slot.write().unwrap() = Some(result);
         notify.notify_waiters();
     }
 
@@ -170,8 +174,9 @@ impl SubagentRegistry {
     /// SubagentRunResult). Returns None if absent or not yet finished.
     pub fn result(&self, agent_id: u64) -> Option<SubagentRunResult> {
         let s = self.states.get(&agent_id)?;
-        // blocking_read avoids holding the DashMap guard across an await.
-        s.result.blocking_read().clone()
+        // std::sync read avoids holding the DashMap guard across an await and
+        // is safe to call from async tool handlers (no panic on runtime threads).
+        s.result.read().unwrap().clone()
     }
 }
 
