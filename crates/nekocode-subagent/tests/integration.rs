@@ -86,6 +86,20 @@ impl Provider for MockProvider {
     }
 }
 
+/// A provider that never resolves — used to exercise `wait_any`'s timeout
+/// path against a subagent that never completes.
+struct PendingProvider;
+#[async_trait::async_trait]
+impl Provider for PendingProvider {
+    async fn stream_generate(
+        &self,
+        _: nekocode_core::types::GenerateRequest,
+        _: mpsc::UnboundedSender<ProviderEvent>,
+    ) -> Result<ProviderResponse, ProviderError> {
+        std::future::pending().await
+    }
+}
+
 async fn temp_db() -> toasty::Db {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
@@ -118,12 +132,57 @@ middlewares = []
     Arc::new(ProfileCatalog { profiles })
 }
 
+fn catalog_with_explorer_and_heavy() -> Arc<ProfileCatalog> {
+    // Like `catalog_with_explorer`, but adds a "heavy" profile that requests
+    // the "shell" middleware — used to exercise the intersection-rejection
+    // branch in spawn_subagent (profile.middlewares must be a subset of the
+    // parent's enabled specs).
+    let toml = r#"
+[[agents]]
+name = "explorer"
+middlewares = []
+
+[[agents]]
+name = "heavy"
+middlewares = ["shell"]
+"#;
+    #[derive(serde::Deserialize)]
+    struct AgentsFile {
+        #[serde(default)]
+        agents: Vec<SubagentProfile>,
+    }
+    let parsed: AgentsFile = toml::from_str(toml).unwrap();
+    let mut profiles = std::collections::HashMap::new();
+    for p in parsed.agents {
+        profiles.insert(p.name.clone(), p);
+    }
+    Arc::new(ProfileCatalog { profiles })
+}
+
 fn make_ctx(allow_nested: bool, max_depth: u32, db: toasty::Db) -> SubagentContext {
     SubagentContext {
         registry: Arc::new(SubagentRegistry::new()),
         specs: Vec::new(),
         factory: Arc::new(MockFactory),
         parent_provider: Arc::new(MockProvider::new(vec![text_msg("done")])),
+        parent_working_directory: "/tmp".into(),
+        parent_db: db,
+        catalog: catalog_with_explorer(),
+        depth: 0,
+        max_depth,
+        allow_nested,
+    }
+}
+
+/// Like `make_ctx` but backs the spawned subagent with a `PendingProvider` so
+/// the subagent's run future never completes. Used to exercise `wait_any`'s
+/// timeout path without killing the still-running subagent.
+fn make_pending_ctx(allow_nested: bool, max_depth: u32, db: toasty::Db) -> SubagentContext {
+    SubagentContext {
+        registry: Arc::new(SubagentRegistry::new()),
+        specs: Vec::new(),
+        factory: Arc::new(MockFactory),
+        parent_provider: Arc::new(PendingProvider),
         parent_working_directory: "/tmp".into(),
         parent_db: db,
         catalog: catalog_with_explorer(),
@@ -209,4 +268,62 @@ async fn spawn_exceeding_max_depth_errors() {
         .await
         .expect_err("depth exceeded");
     assert!(err.to_string().contains("max subagent nesting depth"));
+}
+
+#[tokio::test]
+async fn spawn_requests_unenabled_middleware_errors() {
+    let db = temp_db().await;
+    // Parent has NO enabled middlewares (empty specs); the "heavy" profile
+    // requests "shell", which is not in the parent's enabled set.
+    let mut ctx = make_ctx(true, 1, db);
+    ctx.catalog = catalog_with_explorer_and_heavy();
+    let spawn = SpawnSubagentTool::new(ctx);
+    let err = spawn
+        .call(serde_json::json!({ "profile": "heavy", "prompt": "hi" }))
+        .await
+        .expect_err("unenabled middleware should be rejected");
+    let msg = err.to_string();
+    assert!(msg.contains("requests middleware"), "msg: {msg}");
+    assert!(msg.contains("shell"), "msg: {msg}");
+    assert!(msg.contains("not enabled by parent"), "msg: {msg}");
+}
+
+#[tokio::test]
+async fn wait_any_timeout_against_pending_subagent() {
+    let db = temp_db().await;
+    let ctx = make_pending_ctx(true, 1, db);
+    let spawn = SpawnSubagentTool::new(ctx.clone());
+    let res = spawn
+        .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
+        .await
+        .unwrap();
+    let agent_id = res.get("agent_id").unwrap().as_u64().unwrap();
+
+    // The subagent never completes (PendingProvider). wait_any with a tiny
+    // timeout must return timeout + the pending list, WITHOUT killing the
+    // running subagent.
+    let wait = WaitAnySubagentTool::new(ctx.clone());
+    let wres = wait
+        .call(serde_json::json!({ "agent_ids": [agent_id], "timeout": 0.05 }))
+        .await
+        .unwrap();
+    assert_eq!(wres.get("status").unwrap().as_str(), Some("timeout"));
+    let pending = wres.get("pending").unwrap().as_array().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].as_u64(), Some(agent_id));
+
+    // The subagent should still be running (timeout does NOT kill it).
+    let inspect = InspectSubagentTool::new(ctx.clone());
+    let ires = inspect
+        .call(serde_json::json!({ "agent_id": agent_id }))
+        .await
+        .unwrap();
+    assert_eq!(ires.get("status").unwrap().as_str(), Some("running"));
+
+    // Clean up the never-completing task so the test doesn't leak a runtime task.
+    let abort = AbortSubagentTool::new(ctx);
+    abort
+        .call(serde_json::json!({ "agent_id": agent_id }))
+        .await
+        .unwrap();
 }

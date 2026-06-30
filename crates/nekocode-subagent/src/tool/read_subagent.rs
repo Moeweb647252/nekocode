@@ -58,20 +58,27 @@ impl Tool for ReadSubagentTool {
             .result(agent_id)
             .ok_or_else(|| ToolError::ExecutionError(format!("agent {} has no result", agent_id)))?;
 
-        if text_only {
+        let mut out = if text_only {
             let text = last_assistant_text(&result.messages).unwrap_or_default();
-            Ok(serde_json::json!({
+            serde_json::json!({
                 "agent_id": agent_id,
                 "status": state.name(),
                 "text": text,
-            }))
+            })
         } else {
-            Ok(serde_json::json!({
+            serde_json::json!({
                 "agent_id": agent_id,
                 "status": state.name(),
                 "messages": result.messages,
-            }))
+            })
+        };
+        // Mirror inspect_subagent: surface the error message when the subagent
+        // errored. In text_only mode there is no assistant message on error, so
+        // without this the failure would be invisible to the model.
+        if let crate::registry::SubagentRunState::Error(msg) = &state {
+            out["error"] = serde_json::Value::String(msg.clone());
         }
+        Ok(out)
     }
 }
 
