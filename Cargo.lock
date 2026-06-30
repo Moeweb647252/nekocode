@@ -2485,6 +2485,7 @@ dependencies = [
  "toasty",
  "tokio",
  "tokio-util",
+ "toml",
  "tracing",
 ]
 

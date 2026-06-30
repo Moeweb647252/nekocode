@@ -19,6 +19,7 @@ pub mod runner;
 pub mod tool;
 
 pub use config::SubagentConfig;
+pub use profile::{ProfileCatalog, SubagentProfile};
 pub use registry::{SubagentRegistry, SubagentRunResult, SubagentRunState, SubagentState};
 
 /// Extension key under which a parent agent publishes its
