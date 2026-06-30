@@ -97,20 +97,21 @@ impl SubagentRegistry {
 
     /// Mark a subagent as Finished, store its result, and wake waiters.
     pub fn set_finished(&self, agent_id: u64, result: SubagentRunResult) {
-        if let Some(mut s) = self.states.get_mut(&agent_id) {
+        // Clone the result slot and notify handle out of the DashMap guard,
+        // then write + notify after dropping the guard. This avoids holding
+        // the guard across a blocking lock acquisition AND closes the race
+        // where abort() could remove the entry between a guard drop and a
+        // re-acquire (which would skip notify_waiters).
+        let (result_slot, notify) = if let Some(mut s) = self.states.get_mut(&agent_id) {
             s.run_state = SubagentRunState::Finished;
             s.task_handle = None;
-            // Write the result outside the DashMap guard to avoid holding
-            // the guard across an await. Clone is cheap (Arc-ish fields).
-            let result_slot = s.result.clone();
-            drop(s);
-            // result is RwLock<Option<..>>; blocking write is fine — no await.
-            *result_slot.blocking_write() = Some(result);
-            // Re-acquire to notify.
-            if let Some(s) = self.states.get(&agent_id) {
-                s.notify.notify_waiters();
-            }
-        }
+            (s.result.clone(), s.notify.clone())
+        } else {
+            return;
+        };
+        // result is Arc<RwLock<Option<..>>>; blocking write is fine — no await.
+        *result_slot.blocking_write() = Some(result);
+        notify.notify_waiters();
     }
 
     /// Mark a subagent as Error and wake waiters.
@@ -201,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn set_finished_stores_result_and_wakes() {
+    fn set_finished_stores_result() {
         let reg = SubagentRegistry::new();
         let id = reg.allocate_running();
         let result = SubagentRunResult {
