@@ -19,6 +19,8 @@ pub mod runner;
 pub mod tool;
 
 pub use config::SubagentConfig;
+pub use factory::SubagentMiddlewareFactory;
+pub use middleware::{SubagentContext, SubagentMiddleware};
 pub use profile::{ProfileCatalog, SubagentProfile};
 pub use registry::{SubagentRegistry, SubagentRunResult, SubagentRunState, SubagentState};
 
