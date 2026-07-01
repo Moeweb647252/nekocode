@@ -285,6 +285,7 @@ mod tests {
         EchoMiddleware, InjectMiddleware, MockProvider, OneShotRegenerateMiddleware, text_msg,
         toolcall_msg,
     };
+    use crate::extensions::Extensions;
     use crate::middleware::AgentControlFlow;
 
     static AGENT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -309,7 +310,7 @@ mod tests {
             db,
             middlewares: Arc::new(middlewares),
             provider,
-            extensions: Arc::new(dashmap::DashMap::new()),
+            extensions: Extensions::new(),
         }
     }
 

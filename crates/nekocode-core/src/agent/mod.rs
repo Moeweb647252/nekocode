@@ -3,12 +3,13 @@ pub mod new_agent;
 pub mod sink;
 #[cfg(test)]
 pub(crate) mod test_mocks;
-use std::{any::Any, sync::Arc};
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use nekocode_types::generate::StreamEvent;
 use serde::Serialize;
 
+use crate::extensions::Extensions;
 use crate::middleware::Middleware;
 
 pub use sink::AgentEventSink;
@@ -56,7 +57,7 @@ pub struct Agent {
     pub db: toasty::Db,
     pub middlewares: Arc<Vec<Box<dyn Middleware>>>,
     pub provider: Arc<dyn crate::provider::Provider>,
-    pub extensions: Arc<dashmap::DashMap<String, Box<dyn Any + Send + Sync>>>,
+    pub extensions: Extensions,
 }
 
 #[cfg(test)]
