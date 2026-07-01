@@ -56,8 +56,20 @@ impl Agent {
         // outer middleware-driven regeneration loop.
         let base_system_prompt = format!("Working directory: {}\n", self.working_directory);
 
-        // TEMPORARY: replaced by the real mev_tx channel + merge relay in Task 5.
-        let (mev_tx, _mev_rx) = tokio::sync::mpsc::unbounded_channel();
+        // Channel for middlewares to enqueue MiddlewareEvents; a merge relay
+        // wraps each into a uniquely-indexed AgentEvent on the parent stream.
+        // The relay shares the sink (same atomic index) so its events interleave
+        // contiguously with the run's own StreamEvents.
+        let (mev_tx, mev_rx) =
+            tokio::sync::mpsc::unbounded_channel::<crate::agent::MiddlewareEvent>();
+        let relay_sink = sink.clone();
+        let merge_relay = tokio::spawn(async move {
+            let mut mev_rx = mev_rx;
+            while let Some(mev) = mev_rx.recv().await {
+                // send failure (client gone) just stops relaying
+                let _ = relay_sink.send(crate::agent::AgentEventType::MiddlewareEvent(mev));
+            }
+        });
 
         // Run the body in an async block that borrows the mutable accumulator
         // state by reference and returns `Result<Turn, AgentError>`. The outer
@@ -222,7 +234,7 @@ impl Agent {
         }
         .await;
 
-        match result {
+        let outcome: Result<Turn, Turn> = match result {
             Ok(turn) => Ok(turn),
             Err(e) => {
                 // Surface the error to the client as a terminal stream event,
@@ -238,7 +250,17 @@ impl Agent {
                     finished: false,
                 })
             }
+        };
+        // Cascade-abort every middleware's detached work first (so they stop
+        // producing mev events — e.g. subagents get torn down), then abort the
+        // merge relay. Runs on BOTH the Ok and Err exit paths, before run_loop
+        // returns. Order matters: middlewares must quiesce before the relay
+        // stops draining them.
+        for middleware in self.middlewares.iter() {
+            let _ = middleware.on_turn_end().await;
         }
+        merge_relay.abort();
+        outcome
     }
 
     /// Send a stream event as an [`crate::agent::AgentEvent`], allocating
@@ -448,5 +470,49 @@ mod tests {
     #[test]
     fn _inject_middleware_type_is_referenced() {
         let _ = InjectMiddleware(AgentControlFlow::Output);
+    }
+
+    /// The merge relay wraps each `MiddlewareEvent` (emitted by a middleware
+    /// into `mev_tx`) into a uniquely-indexed `AgentEvent` on the parent
+    /// stream, coexisting with the run's own `StreamEvent`s. The shared
+    /// atomic index on the sink keeps all indices unique & contiguous.
+    #[tokio::test]
+    async fn merge_relay_forwards_middleware_event_with_unique_index() {
+        use crate::agent::test_mocks::RelayMiddleware;
+        use nekocode_types::generate::StreamEventData;
+
+        let agent = make_agent(
+            Arc::new(MockProvider::new(vec![text_msg("ok")])),
+            vec![Box::new(RelayMiddleware)],
+        )
+        .await;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = crate::agent::AgentEventSink::new(tx);
+        let _turn = agent
+            .run_loop(text_input("hi"), Vec::new(), sink)
+            .await
+            .expect("turn ok");
+
+        let mut events = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            events.push(ev);
+        }
+        // The merge-relayed MiddlewareEvent must be present.
+        let mev = events
+            .iter()
+            .find(|e| matches!(e.data, crate::agent::AgentEventType::MiddlewareEvent(_)))
+            .expect("middleware event relayed");
+        let _ = mev;
+        // Indices across all events must be unique and contiguous 0..n.
+        let mut idx: Vec<usize> = events.iter().map(|e| e.index).collect();
+        idx.sort();
+        let expected: Vec<usize> = (0..events.len()).collect();
+        assert_eq!(idx, expected, "indices unique & contiguous");
+        // And a StreamEvent (MessageEnd) coexists.
+        assert!(events.iter().any(|e| matches!(
+            e.data,
+            crate::agent::AgentEventType::StreamEvent(ref se)
+                if matches!(se.data, StreamEventData::MessageEnd(_))
+        )));
     }
 }
