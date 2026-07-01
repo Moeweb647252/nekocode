@@ -1,5 +1,6 @@
 pub mod error;
 pub mod new_agent;
+pub mod sink;
 #[cfg(test)]
 pub(crate) mod test_mocks;
 use std::{any::Any, sync::Arc};
@@ -9,6 +10,8 @@ use nekocode_types::generate::StreamEvent;
 use serde::Serialize;
 
 use crate::middleware::Middleware;
+
+pub use sink::AgentEventSink;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
