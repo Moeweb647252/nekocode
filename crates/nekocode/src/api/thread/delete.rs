@@ -36,7 +36,7 @@ pub async fn delete_thread(
 ///
 /// Refuses if any thread in the set is mid-generation (`generate_states`).
 /// Shared by the `/thread/delete` handler and the `delete_subthread` tool
-/// (via `ApiThreadActivator`).
+/// (via `ApiThreadController`).
 pub async fn delete_threads_cascade(
     db: &toasty::Db,
     active_threads: &dashmap::DashMap<u64, Arc<tokio::sync::RwLock<nekocode_core::agent::Agent>>>,

@@ -16,7 +16,8 @@ pub enum ActivationOutcome {
     AlreadyActivated(Arc<Agent>),
 }
 
-/// Abstraction over the API layer's thread-activation + run-loop machinery.
+/// Abstraction over the API layer's thread control machinery (activate, run,
+/// deactivate, delete).
 ///
 /// The `nekocode-subthread` crate cannot depend on the `nekocode` API crate
 /// (that would be a cycle), so the API crate implements this trait and
@@ -24,7 +25,7 @@ pub enum ActivationOutcome {
 /// sound: the subthread crate defines what it needs, the API crate provides
 /// it.
 #[async_trait::async_trait]
-pub trait ThreadActivator: Send + Sync {
+pub trait ThreadController: Send + Sync {
     /// Activate `subthread_id` (build its `Agent` from its DB middlewares and
     /// insert into `active_threads`), returning the agent if newly activated.
     /// Mirrors the `activate_thread` API endpoint but programmatic.

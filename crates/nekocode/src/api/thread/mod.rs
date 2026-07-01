@@ -9,7 +9,7 @@ pub mod delete;
 pub mod get;
 pub mod list;
 pub mod subagent_factory;
-pub mod subthread_activator;
+pub mod subthread_controller;
 pub mod update;
 
 pub fn router() -> axum::Router<AppState> {
@@ -23,7 +23,7 @@ pub fn router() -> axum::Router<AppState> {
 }
 
 /// Shared context needed to build middleware instances from DB rows.
-/// Both `activate_thread` and `ApiThreadActivator` use this to avoid
+/// Both `activate_thread` and `ApiThreadController` use this to avoid
 /// duplicating the middleware construction logic.
 pub(crate) struct MiddlewareBuildContext {
     pub db: toasty::Db,
@@ -31,14 +31,14 @@ pub(crate) struct MiddlewareBuildContext {
     pub extensions: Arc<dashmap::DashMap<String, Box<dyn std::any::Any + Send + Sync>>>,
     pub thread_id: u64,
     pub working_directory: String,
-    pub subthread_activator: Arc<dyn nekocode_subthread::activator::ThreadActivator>,
+    pub subthread_controller: Arc<dyn nekocode_subthread::controller::ThreadController>,
     pub provider: Arc<dyn nekocode_core::provider::Provider>,
 }
 
 /// Build the middleware chain from a thread's persisted middleware rows.
 /// The `ctx` parameter carries all the state needed to construct each
 /// middleware. The caller is responsible for providing the correct
-/// `subthread_activator` (which differs between top-level activation
+/// `subthread_controller` (which differs between top-level activation
 /// and subthread activation).
 pub(crate) async fn build_middlewares(
     ctx: &MiddlewareBuildContext,
@@ -90,7 +90,7 @@ pub(crate) async fn build_middlewares(
                     ctx.thread_id,
                     ctx.working_directory.clone(),
                     cfg,
-                    ctx.subthread_activator.clone(),
+                    ctx.subthread_controller.clone(),
                 )));
             }
             "subagent" => {

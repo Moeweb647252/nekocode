@@ -46,8 +46,8 @@ pub async fn activate_thread(
 
     let extensions = Arc::new(dashmap::DashMap::new());
 
-    let subthread_activator = std::sync::Arc::new(
-        crate::api::thread::subthread_activator::ApiThreadActivator {
+    let subthread_controller = std::sync::Arc::new(
+        crate::api::thread::subthread_controller::ApiThreadController {
             db: state.db.clone(),
             config: state.config.clone(),
             active_threads: state.active_threads.clone(),
@@ -60,7 +60,7 @@ pub async fn activate_thread(
         extensions: extensions.clone(),
         thread_id,
         working_directory: thread.working_directory.clone(),
-        subthread_activator,
+        subthread_controller,
         provider: provider.clone(),
     };
     let middlewares = build_middlewares(&ctx, &thread.middlewares.get()).await;

@@ -2,7 +2,7 @@
 //!
 //! A subagent is spawned with a prompt, runs `Agent::run_loop` once, stores
 //! the captured `Turn` in memory, and is done. It is purely in-memory (no DB
-//! rows, no `ThreadActivator`), lighter than `nekocode-subthread` (which is
+//! rows, no `ThreadController`), lighter than `nekocode-subthread` (which is
 //! DB-persisted and multi-turn). Per-parent state lives in
 //! `Agent.extensions["subagent"]` as an `Arc<SubagentRegistry>`.
 //!

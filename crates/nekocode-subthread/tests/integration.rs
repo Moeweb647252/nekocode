@@ -2,7 +2,7 @@
 //!
 //! These cover spawn/list/inspect/read/settings and the working-directory
 //! containment rule. `start_subthread` and the wait tools need a live
-//! provider (the real `ThreadActivator`), so they are covered by a manual
+//! provider (the real `ThreadController`), so they are covered by a manual
 //! API-layer smoke test rather than here.
 
 use std::sync::Arc;
@@ -11,11 +11,11 @@ use dashmap::DashMap;
 use nekocode_entities::{middleware::Middleware, prepare_db, thread::Thread};
 use nekocode_subthread::{
     SubthreadConfig, SubthreadMiddleware,
-    activator::{ActivationOutcome, ThreadActivator},
+    controller::{ActivationOutcome, ThreadController},
     middleware::SUBTHREAD_EXTENSION_KEY,
 };
 
-/// A no-op activator used only to satisfy the middleware constructor in tests
+/// A no-op controller used only to satisfy the middleware constructor in tests
 /// that don't exercise start_subthread. Its `activate` and `run` are never
 /// called (the integration tests only invoke spawn/list/inspect/read/settings
 /// /delete), but the trait requires a returnable `Agent` for `AlreadyActivated`,
@@ -24,7 +24,7 @@ use nekocode_subthread::{
 /// `delete_subthread` does real (simplified) DB cascade cleanup so the
 /// `delete_subthread` tool test can verify end-to-end behavior without the
 /// full API-layer cascade function (which lives in the `nekocode` crate).
-struct NoopActivator {
+struct NoopController {
     db: toasty::Db,
 }
 
@@ -43,7 +43,7 @@ impl nekocode_core::provider::Provider for UnusedProvider {
 }
 
 #[async_trait::async_trait]
-impl ThreadActivator for NoopActivator {
+impl ThreadController for NoopController {
     async fn activate(&self, _: u64) -> Result<ActivationOutcome, anyhow::Error> {
         // The variant now carries an Arc<Agent>; we never run this agent in
         // these tests, so a minimal placeholder is fine.
@@ -72,7 +72,7 @@ impl ThreadActivator for NoopActivator {
         // middleware + thread rows for each. The full API-layer version also
         // aborts in-flight tasks and evicts active_threads; this test path has
         // none of those, so DB-only cleanup suffices to prove the tool wires
-        // through to the activator.
+        // through to the controller.
         let mut db = self.db.clone();
         let mut to_delete = vec![subthread_id];
         let mut frontier = vec![subthread_id];
@@ -164,7 +164,7 @@ async fn build_tools(
         parent.id,
         parent.working_directory.clone(),
         SubthreadConfig::default(),
-        Arc::new(NoopActivator { db }),
+        Arc::new(NoopController { db }),
     );
     let mut reg = nekocode_types::tool::ToolRegistry::new();
     let mut req = nekocode_core::types::GenerateRequest::default();

@@ -3,23 +3,23 @@ use std::sync::Arc;
 use dashmap::Entry::{Occupied, Vacant};
 use nekocode_core::agent::{Agent, AgentEvent};
 use nekocode_entities::thread::Thread;
-use nekocode_subthread::activator::{ActivationOutcome, ThreadActivator};
+use nekocode_subthread::controller::{ActivationOutcome, ThreadController};
 use nekocode_types::generate::MessageContent;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::api::generate::turn_io;
 use crate::api::thread::{MiddlewareBuildContext, build_middlewares};
 
-/// API-layer implementation of `ThreadActivator`. Builds a subthread's
+/// API-layer implementation of `ThreadController`. Builds a subthread's
 /// `Agent` from its DB middlewares (mirroring the `activate_thread` API
 /// endpoint's logic) and runs it to completion via `Agent::run_loop`.
 ///
 /// This struct lives in the API crate because it depends on `Agent` and the
 /// `active_threads` / `generate_states` maps, which are API-crate types. The
-/// `nekocode-subthread` crate only knows the `ThreadActivator` trait, keeping
+/// `nekocode-subthread` crate only knows the `ThreadController` trait, keeping
 /// the dependency direction sound.
 #[derive(Clone)]
-pub struct ApiThreadActivator {
+pub struct ApiThreadController {
     pub db: toasty::Db,
     pub config: Arc<tokio::sync::RwLock<nekocode_types::config::Config>>,
     pub active_threads: Arc<dashmap::DashMap<u64, Arc<tokio::sync::RwLock<Agent>>>>,
@@ -27,7 +27,7 @@ pub struct ApiThreadActivator {
 }
 
 #[async_trait::async_trait]
-impl ThreadActivator for ApiThreadActivator {
+impl ThreadController for ApiThreadController {
     async fn activate(&self, subthread_id: u64) -> Result<ActivationOutcome, anyhow::Error> {
         let thread = toasty::query!(Thread FILTER .id == #subthread_id)
             .include(Thread::fields().middlewares())
@@ -57,7 +57,7 @@ impl ThreadActivator for ApiThreadActivator {
             extensions: extensions.clone(),
             thread_id: subthread_id,
             working_directory: thread.working_directory.clone(),
-            subthread_activator: Arc::new(self.clone()),
+            subthread_controller: Arc::new(self.clone()),
             provider: provider.clone(),
         };
         let middlewares = build_middlewares(&ctx, &thread.middlewares.get()).await;

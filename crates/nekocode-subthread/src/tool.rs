@@ -24,7 +24,7 @@ pub struct SubthreadContext {
     /// Used by `set_subthread_settings` to evict a cached agent after a
     /// config change, and by `start_subthread` to activate/run the subthread.
     /// `None` in unit-test contexts.
-    pub activator: Option<Arc<dyn crate::activator::ThreadActivator>>,
+    pub controller: Option<Arc<dyn crate::controller::ThreadController>>,
 }
 
 impl SubthreadContext {
@@ -690,8 +690,8 @@ impl Tool for SetSubthreadSettingsTool {
         })?;
 
         // Evict any cached agent so the next start_subthread rebuilds it.
-        if let Some(activator) = &self.ctx.activator {
-            activator.deactivate(subthread_id).await;
+        if let Some(controller) = &self.ctx.controller {
+            controller.deactivate(subthread_id).await;
         }
 
         Ok(serde_json::json!({
@@ -764,9 +764,9 @@ impl Tool for StartSubthreadTool {
             )));
         }
 
-        let activator = self.ctx.activator.clone().ok_or_else(|| {
+        let controller = self.ctx.controller.clone().ok_or_else(|| {
             ToolError::ExecutionError(
-                "no thread activator configured; cannot start subthread".into(),
+                "no thread controller configured; cannot start subthread".into(),
             )
         })?;
 
@@ -775,20 +775,20 @@ impl Tool for StartSubthreadTool {
         // agent run loop", so an already-activated (but not running) subthread
         // is a valid reuse target, not an error. The only refusal happens
         // earlier, when `run_state == Running`.
-        let agent = activator
+        let agent = controller
             .activate(subthread_id)
             .await
             .map_err(|e| ToolError::ExecutionError(format!("Failed to activate subthread: {e}")))?;
         let agent = match agent {
-            crate::activator::ActivationOutcome::Activated(a)
-            | crate::activator::ActivationOutcome::AlreadyActivated(a) => a,
+            crate::controller::ActivationOutcome::Activated(a)
+            | crate::controller::ActivationOutcome::AlreadyActivated(a) => a,
         };
 
         // Spawn the background run_loop. Events are discarded; results land in
         // the DB and are read via read_subthread.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let registry = self.ctx.registry.clone();
-        let activator_for_task = activator.clone();
+        let controller_for_task = controller.clone();
         let handle = tokio::spawn(async move {
             // Drain the event channel so the agent's send() calls never block
             // when no one is consuming. Aborted once the run completes.
@@ -796,14 +796,14 @@ impl Tool for StartSubthreadTool {
                 while rx.recv().await.is_some() {}
             });
 
-            let result = activator_for_task.run(agent, prompt, tx).await;
+            let result = controller_for_task.run(agent, prompt, tx).await;
             drain.abort();
 
             match result {
                 Ok(()) => registry.set_finished(subthread_id),
                 Err(e) => registry.set_error(subthread_id, e.to_string()),
             }
-            activator_for_task.deactivate(subthread_id).await;
+            controller_for_task.deactivate(subthread_id).await;
         });
 
         self.ctx.registry.set_running(subthread_id, handle);
@@ -1133,22 +1133,22 @@ impl Tool for DeleteSubthreadTool {
         params: serde_json::Value,
     ) -> Result<serde_json::Value, ToolError> {
         let subthread_id = parse_subthread_id(&params)?;
-        // Validate ownership before delegating to the activator's cascade
-        // delete — the activator operates on arbitrary thread ids, so we gate
+        // Validate ownership before delegating to the controller's cascade
+        // delete — the controller operates on arbitrary thread ids, so we gate
         // it here to ensure only the owning parent can delete a subthread.
         self.ctx.require_owned_subthread(subthread_id).await?;
 
-        let activator = self.ctx.activator.clone().ok_or_else(|| {
+        let controller = self.ctx.controller.clone().ok_or_else(|| {
             ToolError::ExecutionError(
-                "no thread activator configured; cannot delete subthread".into(),
+                "no thread controller configured; cannot delete subthread".into(),
             )
         })?;
 
-        // The activator's delete_subthread handles the full cascade: abort
+        // The controller's delete_subthread handles the full cascade: abort
         // in-flight tasks (via each descendant's per-parent registry in
         // Agent.extensions), evict from active_threads/generate_states, and
         // delete DB rows in one transaction.
-        activator
+        controller
             .delete_subthread(subthread_id)
             .await
             .map_err(|e| {
@@ -1157,7 +1157,7 @@ impl Tool for DeleteSubthreadTool {
 
         // Also drop the entry from this parent's own in-memory registry so
         // list_subthreads / inspect_subthread stop reporting it immediately.
-        // (The activator's cascade already aborted any task this parent's
+        // (The controller's cascade already aborted any task this parent's
         // registry held for the subthread via abort_all_and_clear, but the
         // registry entry itself may still be present if the subthread was
         // idle rather than running.)
