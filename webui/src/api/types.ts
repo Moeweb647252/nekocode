@@ -145,7 +145,9 @@ export interface AgentEvent {
   data: AgentEventType
 }
 
-export type AgentEventType = { type: 'streamEvent'; data: RawStreamEventData; createdAt: string }
+export type AgentEventType =
+  | { type: 'streamEvent'; data: RawStreamEventData; createdAt: string }
+  | { type: 'middlewareEvent'; source: string; sourceId: number; eventType: string; data: unknown }
 
 // ── WebSocket event — serde(rename_all = "camelCase"), externally tagged ──
 
