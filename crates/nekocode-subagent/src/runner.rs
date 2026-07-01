@@ -6,37 +6,45 @@ use nekocode_types::generate::MessageContent;
 use crate::registry::{SubagentRegistry, SubagentRunResult};
 
 /// Run a child agent's `run_loop` once with the given prompt and capture the
-/// resulting `Turn` into the registry. The `sink` is provided by the
-/// caller (the spawn tool sets up a drained channel so `run_loop`'s `send()`
-/// never blocks). `old_turns` is always empty (single-turn).
+/// resulting `Turn` into the registry. The `sink` carries the child's own
+/// `AgentEvent` stream (relayed to the parent as `MiddlewareEvent`s by the
+/// spawn tool). `cancel` is the child's `CancellationToken`; if the parent
+/// turn ends, `on_turn_end` → `abort_all_and_clear` cancels it so this run
+/// bails promptly and records an error for waiters. `old_turns` is always
+/// empty (single-turn).
 pub async fn run_subagent(
     agent_id: u64,
     child: Agent,
     prompt: String,
     registry: Arc<SubagentRegistry>,
     sink: nekocode_core::agent::AgentEventSink,
+    cancel: tokio_util::sync::CancellationToken,
 ) {
-    let result = child
-        .run_loop(
-            vec![MessageContent::Text { content: prompt }],
-            Vec::new(),
-            sink,
-        )
-        .await;
-    match result {
-        Ok(turn) => registry.set_finished(
-            agent_id,
-            SubagentRunResult {
-                usage: turn.usage,
-                messages: turn.messages,
-                finished: turn.finished,
-            },
-        ),
-        Err(_partial) => {
-            // run_loop already emitted a MessageEnd(Error) stream event;
-            // record the error so waiters wake and inspect/read can see it.
-            registry.set_error(agent_id, "subagent run_loop failed".into());
+    let run = child.run_loop(
+        vec![MessageContent::Text { content: prompt }],
+        Vec::new(),
+        sink,
+    );
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            // Parent aborted: the child run_loop future is dropped here, so
+            // its OWN end-of-turn on_turn_end dispatch (which would cascade-
+            // abort the child's spawned grandchildren) never runs. Drive that
+            // cascade explicitly so descendants don't leak as detached tasks.
+            for mw in child.middlewares.iter() {
+                let _ = mw.on_turn_end().await;
+            }
+            registry.set_error(agent_id, "subagent cancelled by parent turn end".into());
+            return;
         }
+        r = run => r,
+    };
+    match result {
+        Ok(turn) => registry.set_finished(agent_id, SubagentRunResult {
+            usage: turn.usage, messages: turn.messages, finished: turn.finished,
+        }),
+        Err(_partial) => registry.set_error(agent_id, "subagent run_loop failed".into()),
     }
 }
 
@@ -139,6 +147,7 @@ mod tests {
             "do thing".into(),
             registry.clone(),
             nekocode_core::agent::AgentEventSink::new(tx),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
         assert!(matches!(registry.run_state(id), crate::registry::SubagentRunState::Finished));
@@ -161,6 +170,7 @@ mod tests {
             "do thing".into(),
             registry.clone(),
             nekocode_core::agent::AgentEventSink::new(tx),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
         assert!(matches!(

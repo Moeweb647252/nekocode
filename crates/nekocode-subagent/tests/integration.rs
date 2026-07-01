@@ -382,3 +382,46 @@ async fn spawn_subagent_relays_child_events_as_middleware_event() {
             == Some("streamEvent")
     }));
 }
+
+#[tokio::test]
+async fn abort_all_and_clear_cancels_child_token() {
+    let registry = Arc::new(SubagentRegistry::new());
+    let id = registry.allocate_running();
+    let cancel = registry.cancel_token(id).expect("token present while running");
+    assert!(!cancel.is_cancelled());
+    let aborted = registry.abort_all_and_clear();
+    assert_eq!(aborted, vec![id]);
+    assert!(cancel.is_cancelled(), "cancel token fired by abort_all_and_clear");
+}
+
+#[tokio::test]
+async fn on_turn_end_aborts_running_subagent() {
+    use nekocode_subagent::SubagentMiddleware;
+    let db = temp_db().await;
+    let ctx = make_pending_ctx(true, 1, db);
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let mw = SubagentMiddleware::from_context(ctx.clone());
+    let mut reg = nekocode_core::types::GenerateRequest::default();
+    let mut tools = nekocode_types::tool::ToolRegistry::new();
+    mw.before_generate(&mut reg, &mut tools, &mev_tx).await.unwrap();
+    let spawn = tools.get("spawn_subagent").unwrap().clone();
+    let res = spawn
+        .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
+        .await
+        .unwrap();
+    let agent_id = res.get("agent_id").unwrap().as_u64().unwrap();
+    assert_eq!(
+        ctx.registry.run_state(agent_id),
+        nekocode_subagent::SubagentRunState::Running
+    );
+
+    // Parent turn ends:
+    mw.on_turn_end().await.unwrap();
+
+    // The never-completing subagent must be gone from the registry.
+    assert_eq!(
+        ctx.registry.run_state(agent_id),
+        nekocode_subagent::SubagentRunState::Idle,
+        "subagent evicted by on_turn_end"
+    );
+}

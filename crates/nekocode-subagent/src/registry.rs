@@ -7,7 +7,7 @@ use nekocode_types::generate::{Message, Usage};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubagentRunState {
     Idle,
     Running,
@@ -47,6 +47,12 @@ pub struct SubagentState {
     // Wrapped in `Arc` so the `RwLock` can be cloned out of the DashMap guard
     // before writing (see `set_finished`), mirroring `notify: Arc<Notify>`.
     pub result: Arc<RwLock<Option<SubagentRunResult>>>,
+    /// Cancelled by `abort_all_and_clear` so the child's `run_subagent` bails
+    /// at its next await. On natural completion the child run_loop's own
+    /// on_turn_end dispatch cascades; on cancellation `run_subagent`'s cancel
+    /// branch drives the child middlewares' `on_turn_end` explicitly, so
+    /// grandchildren are aborted either way (real recursion across depth).
+    pub cancel: Arc<tokio_util::sync::CancellationToken>,
 }
 
 impl SubagentState {
@@ -57,6 +63,7 @@ impl SubagentState {
             task_handle: None,
             notify: Arc::new(Notify::new()),
             result: Arc::new(RwLock::new(None)),
+            cancel: Arc::new(tokio_util::sync::CancellationToken::new()),
         }
     }
 }
@@ -86,6 +93,11 @@ impl SubagentRegistry {
             .get(&agent_id)
             .map(|s| s.run_state.clone())
             .unwrap_or(SubagentRunState::Idle)
+    }
+
+    /// Snapshot the cancel token for a running subagent (for tests / cascade).
+    pub fn cancel_token(&self, agent_id: u64) -> Option<Arc<tokio_util::sync::CancellationToken>> {
+        self.states.get(&agent_id).map(|s| s.cancel.clone())
     }
 
     /// Mark a subagent as Running and store its task handle.
@@ -141,7 +153,13 @@ impl SubagentRegistry {
     /// them), aborting in-flight task handles where present.
     pub fn abort_all_and_clear(&self) -> Vec<u64> {
         let mut aborted = Vec::new();
+        // Cancel every child's run_loop first — gives each layer a chance to
+        // bail at its next await. The child's run_subagent cancel branch then
+        // drives its own middlewares' on_turn_end → abort_all_and_clear (real
+        // recursion across nesting depth). JoinHandle::abort() below is the
+        // hard guarantee for tasks that don't yield to the token promptly.
         for entry in self.states.iter() {
+            entry.cancel.cancel();
             aborted.push(entry.agent_id);
         }
         // Abort handles, then clear.

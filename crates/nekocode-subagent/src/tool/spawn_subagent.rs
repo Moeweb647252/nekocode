@@ -96,6 +96,11 @@ impl Tool for SpawnSubagentTool {
             .collect();
 
         let agent_id = self.ctx.registry.allocate_running();
+        let child_cancel = self
+            .ctx
+            .registry
+            .cancel_token(agent_id)
+            .expect("token present right after allocate_running");
         let child_extensions = Arc::new(dashmap::DashMap::new());
 
         // Build isolated middleware instances via the factory.
@@ -175,7 +180,10 @@ impl Tool for SpawnSubagentTool {
                 prompt,
                 registry,
                 nekocode_core::agent::AgentEventSink::new(child_tx),
+                (*child_cancel).clone(),
             )
+            // child_cancel is Arc<CancellationToken>; cloning the Arc shares
+            // the same token so abort_all_and_clear's cancel reaches this run.
             .await;
             // run_subagent returns → child run_loop dropped child_tx → relay ends.
             relay.await.ok();

@@ -75,6 +75,13 @@ impl SubagentMiddleware {
             max_depth: config.max_depth,
             allow_nested,
         };
+        Self::from_context(ctx)
+    }
+
+    /// Build a middleware from an already-constructed context (tests that
+    /// build `SubagentContext` directly use this; `new` builds the ctx
+    /// then delegates here).
+    pub fn from_context(ctx: SubagentContext) -> Self {
         Self { ctx }
     }
 }
