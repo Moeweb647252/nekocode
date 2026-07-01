@@ -68,6 +68,7 @@ impl Middleware for SkillsMiddleware {
         &self,
         request: &mut nekocode_core::types::GenerateRequest,
         registry: &mut nekocode_types::tool::ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         let skills = self.get_skills().await;
 

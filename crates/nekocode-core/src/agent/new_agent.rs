@@ -60,6 +60,9 @@ impl Agent {
         // Stream event index shared across the whole run.
         let mut index = 0usize;
 
+        // TEMPORARY: replaced by the real mev_tx channel + merge relay in Task 5.
+        let (mev_tx, _mev_rx) = tokio::sync::mpsc::unbounded_channel();
+
         // Run the body in an async block that borrows the mutable accumulator
         // state by reference and returns `Result<Turn, AgentError>`. The outer
         // match turns an early `?` return into a partial-turn `Err(Turn)` while
@@ -78,7 +81,7 @@ impl Agent {
                 let mut tool_registry = ToolRegistry::new();
                 for middleware in self.middlewares.iter() {
                     middleware
-                        .before_generate(&mut request, &mut tool_registry)
+                        .before_generate(&mut request, &mut tool_registry, &mev_tx)
                         .await?;
                 }
                 request.tool_specs = tool_registry.specs();

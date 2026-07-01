@@ -168,8 +168,9 @@ async fn build_tools(
     );
     let mut reg = nekocode_types::tool::ToolRegistry::new();
     let mut req = nekocode_core::types::GenerateRequest::default();
+    let (mev_tx, _mev_rx) = tokio::sync::mpsc::unbounded_channel();
     <SubthreadMiddleware as nekocode_core::middleware::Middleware>::before_generate(
-        &mw, &mut req, &mut reg,
+        &mw, &mut req, &mut reg, &mev_tx,
     )
     .await
     .expect("before_generate");

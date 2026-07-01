@@ -85,6 +85,7 @@ impl Middleware for SubagentMiddleware {
         &self,
         _request: &mut nekocode_core::types::GenerateRequest,
         registry: &mut ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         let ctx = &self.ctx;
         registry.insert("spawn_subagent".into(), Arc::new(SpawnSubagentTool::new(ctx.clone())));

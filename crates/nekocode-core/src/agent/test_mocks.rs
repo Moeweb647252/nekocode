@@ -121,6 +121,7 @@ impl Middleware for EchoMiddleware {
         &self,
         _req: &mut GenerateRequest,
         reg: &mut ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<crate::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         reg.insert("echo".into(), Arc::new(EchoTool));
         Ok(())
@@ -145,6 +146,7 @@ impl Middleware for InjectMiddleware {
         &self,
         _req: &mut GenerateRequest,
         _reg: &mut ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<crate::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -174,6 +176,7 @@ impl Middleware for OneShotRegenerateMiddleware {
         &self,
         _req: &mut GenerateRequest,
         _reg: &mut ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<crate::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }

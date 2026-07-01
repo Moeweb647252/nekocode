@@ -56,6 +56,7 @@ impl Middleware for NoopMiddleware {
         &self,
         _: &mut nekocode_core::types::GenerateRequest,
         _: &mut nekocode_types::tool::ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }

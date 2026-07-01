@@ -96,6 +96,7 @@ impl Middleware for McpMiddleware {
         &self,
         _: &mut nekocode_core::types::GenerateRequest,
         registry: &mut ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         let Some(client) = self.get_client().await else {
             return Ok(());

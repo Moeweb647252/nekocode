@@ -35,6 +35,7 @@ impl Middleware for ToolMiddleware {
         &self,
         _: &mut nekocode_core::types::GenerateRequest,
         registry: &mut nekocode_types::tool::ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         registry.insert(
             "read_file".into(),
