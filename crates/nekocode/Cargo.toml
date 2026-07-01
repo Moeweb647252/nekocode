@@ -40,6 +40,7 @@ nekocode-file.workspace = true
 nekocode-mcp.workspace = true
 nekocode-skills.workspace = true
 nekocode-subthread.workspace = true
+nekocode-subagent.workspace = true
 async-trait.workspace = true
 constant_time_eq = "0.3"
 

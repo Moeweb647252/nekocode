@@ -28,8 +28,9 @@ pub async fn delete_thread(
 /// Delete `root` and every thread reachable from it via `own_by_id`, in one
 /// transaction. For each thread in the closure:
 /// 1. If it is currently activated, read its per-parent `SubthreadRegistry`
-///    from `Agent.extensions` and abort every in-flight subthread background
-///    task it owns (children first, though order is not load-bearing).
+///    and `SubagentRegistry` from `Agent.extensions` and abort every in-flight
+///    subthread and subagent background task it owns (children first, though
+///    order is not load-bearing).
 /// 2. Evict it from `active_threads` / `generate_states`.
 /// 3. Delete its messages → turns → middlewares → thread row.
 ///
@@ -70,12 +71,15 @@ pub async fn delete_threads_cascade(
         }
     }
 
-    // Abort any in-flight subthread background tasks owned by each thread in
-    // the set, then evict the thread itself from the caches. Iterate in reverse
-    // (children first) so a subthread's own sub-subthread tasks are aborted
-    // before the subthread itself.
+    // Abort any in-flight subthread and subagent background tasks owned by
+    // each thread in the set, then evict the thread itself from the caches.
+    // Iterate in reverse (children first) so a subthread's own sub-subthread
+    // tasks are aborted before the subthread itself. Subagent tasks are
+    // purely in-memory (no DB cascade), so abort_all_and_clear is the full
+    // cleanup.
     for id in to_delete.iter().rev() {
         abort_subthread_tasks(active_threads, *id).await;
+        abort_subagent_tasks(active_threads, *id).await;
         active_threads.remove(id);
         generate_states.remove(id);
     }
@@ -137,6 +141,33 @@ async fn abort_subthread_tasks(
         // it owns and clear the registry. The registry itself will be dropped
         // with the agent, but `abort_all_and_clear` releases task handles
         // promptly so the runtime can reclaim them before we touch the DB.
+        let _aborted = registry.abort_all_and_clear();
+    }
+}
+
+/// Read a thread's per-parent `SubagentRegistry` from its activated `Agent`'s
+/// extensions (if any) and abort every in-flight subagent background task it
+/// owns. No-op when the thread isn't activated. No DB cascade — subagent
+/// state is purely in-memory.
+async fn abort_subagent_tasks(
+    active_threads: &dashmap::DashMap<u64, Arc<tokio::sync::RwLock<nekocode_core::agent::Agent>>>,
+    thread_id: u64,
+) {
+    let registry: Option<Arc<nekocode_subagent::SubagentRegistry>> =
+        if let Some(agent_entry) = active_threads.get(&thread_id) {
+            let agent = agent_entry.value().read().await;
+            agent
+                .extensions
+                .get(nekocode_subagent::SUBAGENT_EXTENSION_KEY)
+                .and_then(|b| {
+                    b.downcast_ref::<Arc<nekocode_subagent::SubagentRegistry>>()
+                        .cloned()
+                })
+        } else {
+            None
+        };
+
+    if let Some(registry) = registry {
         let _aborted = registry.abort_all_and_clear();
     }
 }

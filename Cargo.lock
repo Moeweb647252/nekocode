@@ -2334,6 +2334,7 @@ dependencies = [
  "nekocode-provider",
  "nekocode-shell",
  "nekocode-skills",
+ "nekocode-subagent",
  "nekocode-subthread",
  "nekocode-types",
  "scopeguard",
@@ -2466,6 +2467,28 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nekocode-subagent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dashmap",
+ "dirs",
+ "futures-util",
+ "jiff",
+ "nekocode-core",
+ "nekocode-entities",
+ "nekocode-types",
+ "serde",
+ "serde_json",
+ "toasty",
+ "tokio",
+ "tokio-util",
+ "toml",
  "tracing",
 ]
 

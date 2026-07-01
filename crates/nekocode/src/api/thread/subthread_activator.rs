@@ -44,8 +44,8 @@ impl ThreadActivator for ApiThreadActivator {
             .find(|cfg| cfg.name == thread.model)
             .ok_or_else(|| anyhow::anyhow!("Model config not found: {}", thread.model))?;
         // Build the provider once and share it via Arc — both the
-        // middleware-build context (for the subagent middleware) and the
-        // Agent struct itself need the same provider instance.
+        // middleware-build context (for the subthread and subagent middlewares)
+        // and the Agent struct itself need the same provider instance.
         let provider: Arc<dyn nekocode_core::provider::Provider> =
             Arc::from(nekocode_provider::build_from_config(&model_config.data));
 
@@ -58,6 +58,7 @@ impl ThreadActivator for ApiThreadActivator {
             thread_id: subthread_id,
             working_directory: thread.working_directory.clone(),
             subthread_activator: Arc::new(self.clone()),
+            provider: provider.clone(),
         };
         let middlewares = build_middlewares(&ctx, &thread.middlewares.get()).await;
 
