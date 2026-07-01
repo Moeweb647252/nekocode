@@ -193,11 +193,22 @@ fn make_pending_ctx(allow_nested: bool, max_depth: u32, db: toasty::Db) -> Subag
     }
 }
 
+/// A mev_tx whose receiver is kept alive so sends succeed; for tests that
+/// don't assert on relayed events. The caller binds the receiver (e.g. to
+/// `_mev_rx`) so it stays alive for the test's lifetime — fine for a test.
+fn dummy_mev_tx() -> (
+    tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
+    tokio::sync::mpsc::UnboundedReceiver<nekocode_core::agent::MiddlewareEvent>,
+) {
+    tokio::sync::mpsc::unbounded_channel()
+}
+
 #[tokio::test]
 async fn spawn_wait_read_lifecycle() {
     let db = temp_db().await;
     let ctx = make_ctx(true, 1, db); // max_depth=1 → depth 0+1 <= 1, spawn allowed
-    let spawn = SpawnSubagentTool::new(ctx.clone());
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let spawn = SpawnSubagentTool::new(ctx.clone(), mev_tx);
     let res = spawn
         .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
         .await
@@ -239,7 +250,8 @@ async fn spawn_wait_read_lifecycle() {
 async fn spawn_unknown_profile_errors() {
     let db = temp_db().await;
     let ctx = make_ctx(true, 0, db);
-    let spawn = SpawnSubagentTool::new(ctx);
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let spawn = SpawnSubagentTool::new(ctx, mev_tx);
     let err = spawn
         .call(serde_json::json!({ "profile": "nope", "prompt": "hi" }))
         .await
@@ -251,7 +263,8 @@ async fn spawn_unknown_profile_errors() {
 async fn spawn_when_parent_disallows_nesting_errors() {
     let db = temp_db().await;
     let ctx = make_ctx(false, 5, db); // allow_nested=false
-    let spawn = SpawnSubagentTool::new(ctx);
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let spawn = SpawnSubagentTool::new(ctx, mev_tx);
     let err = spawn
         .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
         .await
@@ -263,7 +276,8 @@ async fn spawn_when_parent_disallows_nesting_errors() {
 async fn spawn_exceeding_max_depth_errors() {
     let db = temp_db().await;
     let ctx = make_ctx(true, 0, db); // max_depth=0 → depth 0+1 > 0
-    let spawn = SpawnSubagentTool::new(ctx);
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let spawn = SpawnSubagentTool::new(ctx, mev_tx);
     let err = spawn
         .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
         .await
@@ -278,7 +292,8 @@ async fn spawn_requests_unenabled_middleware_errors() {
     // requests "shell", which is not in the parent's enabled set.
     let mut ctx = make_ctx(true, 1, db);
     ctx.catalog = catalog_with_explorer_and_heavy();
-    let spawn = SpawnSubagentTool::new(ctx);
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let spawn = SpawnSubagentTool::new(ctx, mev_tx);
     let err = spawn
         .call(serde_json::json!({ "profile": "heavy", "prompt": "hi" }))
         .await
@@ -293,7 +308,8 @@ async fn spawn_requests_unenabled_middleware_errors() {
 async fn wait_any_timeout_against_pending_subagent() {
     let db = temp_db().await;
     let ctx = make_pending_ctx(true, 1, db);
-    let spawn = SpawnSubagentTool::new(ctx.clone());
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let spawn = SpawnSubagentTool::new(ctx.clone(), mev_tx);
     let res = spawn
         .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
         .await

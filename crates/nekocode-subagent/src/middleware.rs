@@ -85,15 +85,27 @@ impl Middleware for SubagentMiddleware {
         &self,
         _request: &mut nekocode_core::types::GenerateRequest,
         registry: &mut ToolRegistry,
-        _: &tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
+        mev_tx: &tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         let ctx = &self.ctx;
-        registry.insert("spawn_subagent".into(), Arc::new(SpawnSubagentTool::new(ctx.clone())));
+        registry.insert(
+            "spawn_subagent".into(),
+            Arc::new(SpawnSubagentTool::new(ctx.clone(), mev_tx.clone())),
+        );
         registry.insert("inspect_subagent".into(), Arc::new(InspectSubagentTool::new(ctx.clone())));
         registry.insert("read_subagent".into(), Arc::new(ReadSubagentTool::new(ctx.clone())));
         registry.insert("wait_any_subagent".into(), Arc::new(WaitAnySubagentTool::new(ctx.clone())));
         registry.insert("wait_all_subagents".into(), Arc::new(WaitAllSubagentsTool::new(ctx.clone())));
         registry.insert("abort_subagent".into(), Arc::new(AbortSubagentTool::new(ctx.clone())));
+        Ok(())
+    }
+
+    async fn on_turn_end(&self) -> Result<(), anyhow::Error> {
+        // Parent turn is over: no subagent may outlive it. Cascade-abort
+        // everything still running and clear the registry. (Task 7 wiring:
+        // `abort_all_and_clear` already does `JoinHandle::abort()` per child;
+        // Task 9 upgrades it to cancel-first via CancellationToken.)
+        self.ctx.registry.abort_all_and_clear();
         Ok(())
     }
 }

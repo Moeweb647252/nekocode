@@ -11,11 +11,15 @@ use crate::SubagentContext;
 
 pub struct SpawnSubagentTool {
     ctx: SubagentContext,
+    mev_tx: tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
 }
 
 impl SpawnSubagentTool {
-    pub fn new(ctx: SubagentContext) -> Self {
-        Self { ctx }
+    pub fn new(
+        ctx: SubagentContext,
+        mev_tx: tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
+    ) -> Self {
+        Self { ctx, mev_tx }
     }
 }
 
@@ -43,6 +47,11 @@ impl Tool for SpawnSubagentTool {
     }
 
     async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
+        // Task 7: mev_tx is plumbed but not yet used for the spawn relay
+        // (Task 8 wires it into the child's event forwarding). Read it here
+        // to keep the field live and avoid a dead_code warning in the
+        // interim; replaced with real usage in Task 8.
+        let _ = &self.mev_tx;
         let profile_name = params
             .get("profile")
             .and_then(|v| v.as_str())
