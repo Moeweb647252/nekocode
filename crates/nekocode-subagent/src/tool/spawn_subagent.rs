@@ -47,11 +47,6 @@ impl Tool for SpawnSubagentTool {
     }
 
     async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
-        // Task 7: mev_tx is plumbed but not yet used for the spawn relay
-        // (Task 8 wires it into the child's event forwarding). Read it here
-        // to keep the field live and avoid a dead_code warning in the
-        // interim; replaced with real usage in Task 8.
-        let _ = &self.mev_tx;
         let profile_name = params
             .get("profile")
             .and_then(|v| v.as_str())
@@ -151,17 +146,39 @@ impl Tool for SpawnSubagentTool {
             extensions: child_extensions,
         };
 
-        // Drained-sender pattern: a companion task drains the event channel so
-        // run_loop's send() never blocks when no one consumes.
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        // Relay pattern: a companion task wraps each child AgentEvent as a
+        // MiddlewareEvent and forwards it to the parent's mev_tx (which
+        // run_loop's merge relay turns into a uniquely-indexed AgentEvent on
+        // the parent stream). Replaces the old drain-and-discard task.
+        let (child_tx, mut child_rx) = mpsc::unbounded_channel();
+        let mev_tx = self.mev_tx.clone();
+        let relay_target_agent_id = agent_id;
         let registry = self.ctx.registry.clone();
+
         let handle = tokio::spawn(async move {
-            let drain = tokio::spawn(async move {
-                while rx.recv().await.is_some() {}
+            let relay = tokio::spawn(async move {
+                while let Some(child_event) = child_rx.recv().await {
+                    let mev = nekocode_core::agent::MiddlewareEvent {
+                        source: std::borrow::Cow::Borrowed("subagent"),
+                        source_id: relay_target_agent_id,
+                        event_type: "agentEvent".into(),
+                        data: serde_json::to_value(&child_event)
+                            .unwrap_or(serde_json::Value::Null),
+                    };
+                    // Parent stream may have closed: send failure just stops relaying.
+                    let _ = mev_tx.send(mev);
+                }
             });
-            run_subagent(agent_id, child, prompt, registry, nekocode_core::agent::AgentEventSink::new(tx))
-                .await;
-            drain.abort();
+            run_subagent(
+                agent_id,
+                child,
+                prompt,
+                registry,
+                nekocode_core::agent::AgentEventSink::new(child_tx),
+            )
+            .await;
+            // run_subagent returns → child run_loop dropped child_tx → relay ends.
+            relay.await.ok();
         });
 
         self.ctx.registry.set_running(agent_id, handle);

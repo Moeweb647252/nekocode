@@ -344,3 +344,41 @@ async fn wait_any_timeout_against_pending_subagent() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn spawn_subagent_relays_child_events_as_middleware_event() {
+    let db = temp_db().await;
+    let ctx = make_ctx(true, 1, db);
+    let (mev_tx, mut mev_rx) = tokio::sync::mpsc::unbounded_channel();
+    let spawn = SpawnSubagentTool::new(ctx.clone(), mev_tx);
+
+    let res = spawn
+        .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
+        .await
+        .unwrap();
+    let agent_id = res.get("agent_id").unwrap().as_u64().unwrap();
+
+    // Wait for the subagent to finish so the relay has flushed everything.
+    let wait = WaitAnySubagentTool::new(ctx.clone());
+    let _ = wait
+        .call(serde_json::json!({ "agent_ids": [agent_id], "timeout": 5.0 }))
+        .await
+        .unwrap();
+
+    let mut relayed = Vec::new();
+    while let Ok(mev) = mev_rx.try_recv() {
+        relayed.push(mev);
+    }
+    assert!(!relayed.is_empty(), "at least one child event relayed");
+    for mev in &relayed {
+        assert_eq!(mev.source, "subagent");
+        assert_eq!(mev.source_id, agent_id);
+        assert_eq!(mev.event_type, "agentEvent");
+        assert!(mev.data.is_object(), "data is the serialized child AgentEvent");
+    }
+    // The child emits at least a streamEvent; ensure it's in the relayed set.
+    assert!(relayed.iter().any(|mev| {
+        mev.data.get("data").and_then(|d| d.get("type")).and_then(|t| t.as_str())
+            == Some("streamEvent")
+    }));
+}
