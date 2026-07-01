@@ -5,6 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use nekocode_core::extensions::Extensions;
 use nekocode_core::middleware::{Middleware, MiddlewareSpec};
 use nekocode_core::provider::{Provider, ProviderError, ProviderEvent, ProviderResponse};
 use nekocode_subagent::{
@@ -24,7 +25,7 @@ impl SubagentMiddlewareFactory for MockFactory {
         &self,
         _spec: MiddlewareSpec,
         _subagent_id: u64,
-        _extensions: Arc<dashmap::DashMap<String, Box<dyn std::any::Any + Send + Sync>>>,
+        _extensions: Extensions,
     ) -> Box<dyn Middleware> {
         Box::new(NoopMiddleware)
     }

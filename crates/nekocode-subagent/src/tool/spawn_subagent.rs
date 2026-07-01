@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use nekocode_core::agent::Agent;
+use nekocode_core::extensions::Extensions;
 use nekocode_core::middleware::MiddlewareSpec;
 use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 use tokio::sync::mpsc;
@@ -101,7 +102,7 @@ impl Tool for SpawnSubagentTool {
             .registry
             .cancel_token(agent_id)
             .expect("token present right after allocate_running");
-        let child_extensions = Arc::new(dashmap::DashMap::new());
+        let child_extensions = Extensions::new();
 
         // Build isolated middleware instances via the factory.
         let mut child_middlewares: Vec<Box<dyn nekocode_core::middleware::Middleware>> = Vec::new();

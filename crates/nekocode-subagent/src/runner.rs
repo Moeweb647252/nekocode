@@ -67,6 +67,7 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    use nekocode_core::extensions::Extensions;
     use nekocode_core::provider::{Provider, ProviderError, ProviderEvent, ProviderResponse};
     use nekocode_types::generate::{
         AssistantContentBlock, AssistantMessage, StopReason, Usage,
@@ -145,7 +146,7 @@ mod tests {
             db,
             middlewares: Arc::new(Vec::new()),
             provider,
-            extensions: Arc::new(dashmap::DashMap::new()),
+            extensions: Extensions::new(),
         }
     }
 

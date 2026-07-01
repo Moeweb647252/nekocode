@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dashmap::DashMap;
+use nekocode_core::extensions::Extensions;
 use nekocode_core::middleware::{Middleware, MiddlewareSpec};
 use nekocode_core::provider::Provider;
 use nekocode_types::tool::ToolRegistry;
@@ -50,7 +50,7 @@ impl SubagentMiddleware {
         specs: Vec<MiddlewareSpec>,
         factory: Arc<dyn SubagentMiddlewareFactory>,
         parent_provider: Arc<dyn Provider>,
-        parent_extensions: Arc<DashMap<String, Box<dyn std::any::Any + Send + Sync>>>,
+        parent_extensions: Extensions,
         parent_db: toasty::Db,
         parent_working_directory: String,
         config: crate::SubagentConfig,
@@ -67,10 +67,7 @@ impl SubagentMiddleware {
                     ProfileCatalog::empty()
                 }),
         );
-        parent_extensions.insert(
-            crate::SUBAGENT_EXTENSION_KEY.into(),
-            Box::new(registry.clone()) as Box<dyn std::any::Any + Send + Sync>,
-        );
+        parent_extensions.insert(registry.clone());
         let ctx = SubagentContext {
             registry: registry.clone(),
             specs,
