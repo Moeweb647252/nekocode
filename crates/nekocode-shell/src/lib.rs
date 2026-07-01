@@ -1,11 +1,11 @@
 use std::{
-    any::Any,
     sync::{
         Arc,
         atomic::{AtomicU32, AtomicUsize},
     },
 };
 
+use nekocode_core::extensions::Extensions;
 use nekocode_core::middleware::Middleware;
 use sdd::AtomicOwned;
 use tokio::sync::mpsc;
@@ -41,12 +41,9 @@ pub struct Shell {
 }
 
 impl Shell {
-    pub fn new(
-        extensions: Arc<dashmap::DashMap<String, Box<dyn Any + Send + Sync>>>,
-        config: config::ShellConfig,
-    ) -> Self {
+    pub fn new(extensions: Extensions, config: config::ShellConfig) -> Self {
         let shell_states = Arc::new(dashmap::DashMap::new());
-        extensions.insert("shell".into(), Box::new(shell_states.clone()));
+        extensions.insert(shell_states.clone());
         Self {
             shell_states,
             config: Arc::new(config),
