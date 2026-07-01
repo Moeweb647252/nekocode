@@ -139,11 +139,13 @@ pub trait Middleware: Send + Sync {
 1. Build `AgentEventSink` (wraps `tx` + the shared `Arc<AtomicUsize>`); used
    privately by `Agent::send`.
 2. Build `mpsc::unbounded_channel::<MiddlewareEvent>()`.
-3. Spawn a **merge relay**: loop on `mev_rx.recv()`, then on each `MiddlewareEvent`
-   call the shared atomic on the `AgentEventSink` to allocate a unique index,
-   wrap as `AgentEvent { index, AgentEventType::MiddlewareEvent(mev) }`, send on
-   `tx`. Two producers (`Agent::send` and the merge relay) share the same
-   `Arc<AtomicUsize>` → indices stay unique; both funnel through the same `tx`.
+3. Spawn a **merge relay** with a clone of the `AgentEventSink`: loop on
+   `mev_rx.recv()`, then call `sink.send(AgentEventType::MiddlewareEvent(mev))`
+   per `MiddlewareEvent`. `sink.send` allocates the unique index from the shared
+   `Arc<AtomicUsize>` and forwards to `tx` in one step — the merge relay never
+   touches `tx` directly (the sink owns it). Two producers (`Agent::send` and
+   the merge relay) share the same `Arc<AtomicUsize>` → indices stay unique;
+   both funnel through the same `tx`.
 4. Pass `&mev_tx` into each `middleware.before_generate(...)`.
 
 Per-layer boundary: the child `run_loop` builds its *own* `AgentEventSink` and
