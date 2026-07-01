@@ -7,7 +7,7 @@ use nekocode_types::generate::{Message, Usage};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubagentRunState {
     Idle,
     Running,
@@ -47,6 +47,14 @@ pub struct SubagentState {
     // Wrapped in `Arc` so the `RwLock` can be cloned out of the DashMap guard
     // before writing (see `set_finished`), mirroring `notify: Arc<Notify>`.
     pub result: Arc<RwLock<Option<SubagentRunResult>>>,
+    /// Per-child cancellation token, fired by `abort_all_and_clear` (batch) and
+    /// `abort_subagent` (single). This is the per-agent abort path; the
+    /// cross-depth TREE-WIDE cancellation lives on `SubagentContext.run_cancel`
+    /// (a single flag the root mints and every descendant shares), which the
+    /// root's `on_turn_end` cancels so the whole spawn tree bails concurrently.
+    /// This per-state `cancel` is the hard backstop for tasks that haven't
+    /// yielded to `run_cancel` yet (and the path for explicit single-agent abort).
+    pub cancel: Arc<tokio_util::sync::CancellationToken>,
 }
 
 impl SubagentState {
@@ -57,6 +65,7 @@ impl SubagentState {
             task_handle: None,
             notify: Arc::new(Notify::new()),
             result: Arc::new(RwLock::new(None)),
+            cancel: Arc::new(tokio_util::sync::CancellationToken::new()),
         }
     }
 }
@@ -86,6 +95,11 @@ impl SubagentRegistry {
             .get(&agent_id)
             .map(|s| s.run_state.clone())
             .unwrap_or(SubagentRunState::Idle)
+    }
+
+    /// Snapshot the cancel token for a running subagent (for tests / cascade).
+    pub fn cancel_token(&self, agent_id: u64) -> Option<Arc<tokio_util::sync::CancellationToken>> {
+        self.states.get(&agent_id).map(|s| s.cancel.clone())
     }
 
     /// Mark a subagent as Running and store its task handle.
@@ -141,7 +155,16 @@ impl SubagentRegistry {
     /// them), aborting in-flight task handles where present.
     pub fn abort_all_and_clear(&self) -> Vec<u64> {
         let mut aborted = Vec::new();
+        // Cancel every direct child's per-state token so their run_subagent select!
+        // bails at its next await. (Note: cross-DEPTH tree-wide cancellation is
+        // driven by the shared `run_cancel` on SubagentContext, cancelled once
+        // by the root's on_turn_end — every descendant subscribes to the same
+        // flag and ends concurrently. This per-state cancel handles direct
+        // children/abort_subagent and is the backstop for tasks not yet
+        // polled onto run_cancel.) JoinHandle::abort() below is the hard
+        // guarantee for tasks that don't yield to either token promptly.
         for entry in self.states.iter() {
+            entry.cancel.cancel();
             aborted.push(entry.agent_id);
         }
         // Abort handles, then clear.

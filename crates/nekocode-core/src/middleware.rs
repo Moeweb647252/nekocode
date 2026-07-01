@@ -32,15 +32,21 @@ pub trait Middleware: Send + Sync {
         &self,
         _: &mut GenerateRequest,
         _: &mut ToolRegistry,
+        // Narrow capability: a middleware can only emit MiddlewareEvent,
+        // never a forged StreamEvent. Index allocation / wrapping is done
+        // by a merge relay inside run_loop, not by the middleware.
+        _: &tokio::sync::mpsc::UnboundedSender<crate::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
 
-    async fn after_generate(
-        &self,
-        _: &GenerateResponse,
-        _: &mut AgentControlFlow,
-    ) -> Result<(), anyhow::Error> {
+    async fn after_generate(&self, _: &GenerateResponse, _: &mut AgentControlFlow)
+        -> Result<(), anyhow::Error> { Ok(()) }
+
+    /// Called once at the end of the turn (both Ok and Err paths) before
+    /// `run_loop` returns. Default is a no-op; middlewares that spawn
+    /// detached work (e.g. subagent) override this to cascade-abort it.
+    async fn on_turn_end(&self) -> Result<(), anyhow::Error> {
         Ok(())
     }
 }

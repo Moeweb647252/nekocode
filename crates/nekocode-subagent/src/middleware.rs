@@ -27,6 +27,14 @@ pub struct SubagentContext {
     pub depth: u32,
     pub max_depth: u32,
     pub allow_nested: bool,
+    /// A single `CancellationToken` shared across the whole spawn tree (the
+    /// root created it; every descendant clones the same flag into its own
+    /// context). When the parent turn ends, the root's `on_turn_end` cancels
+    /// this token, so every descendant `run_subagent`'s `select!` observes the
+    /// cancellation concurrently and bails — no reliance on the runtime
+    /// re-poling one layer before the next. This is what makes the cascade
+    /// "real recursion across depth" rather than best-effort.
+    pub run_cancel: tokio_util::sync::CancellationToken,
 }
 
 /// The subagent middleware. Registered on a parent agent's middleware chain;
@@ -74,8 +82,30 @@ impl SubagentMiddleware {
             depth,
             max_depth: config.max_depth,
             allow_nested,
+            // The root creates the shared run-cancel flag; descendants clone
+            // it (passed down via the child SubagentMiddleware's context) so
+            // the whole tree subscribes to the same cancellation.
+            run_cancel: tokio_util::sync::CancellationToken::new(),
         };
+        Self::from_context(ctx)
+    }
+
+    /// Build a middleware from an already-constructed context (tests that
+    /// build `SubagentContext` directly use this; `new` builds the ctx
+    /// then delegates here).
+    pub fn from_context(ctx: SubagentContext) -> Self {
         Self { ctx }
+    }
+
+    /// Replace this middleware's tree cancellation flag with `token`. Used by
+    /// `spawn_subagent` so the child and all its descendants subscribe to the
+    /// SAME flag the root created — cancelling once from the root's
+    /// `on_turn_end` wakes every descendant `run_subagent` across all depth.
+    /// (`new` mints its own fresh flag; at nested spawn we must re-point the
+    /// child's flag at the inherited one.)
+    pub fn with_run_cancel(mut self, token: tokio_util::sync::CancellationToken) -> Self {
+        self.ctx.run_cancel = token;
+        self
     }
 }
 
@@ -85,14 +115,32 @@ impl Middleware for SubagentMiddleware {
         &self,
         _request: &mut nekocode_core::types::GenerateRequest,
         registry: &mut ToolRegistry,
+        mev_tx: &tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         let ctx = &self.ctx;
-        registry.insert("spawn_subagent".into(), Arc::new(SpawnSubagentTool::new(ctx.clone())));
+        registry.insert(
+            "spawn_subagent".into(),
+            Arc::new(SpawnSubagentTool::new(ctx.clone(), mev_tx.clone())),
+        );
         registry.insert("inspect_subagent".into(), Arc::new(InspectSubagentTool::new(ctx.clone())));
         registry.insert("read_subagent".into(), Arc::new(ReadSubagentTool::new(ctx.clone())));
         registry.insert("wait_any_subagent".into(), Arc::new(WaitAnySubagentTool::new(ctx.clone())));
         registry.insert("wait_all_subagents".into(), Arc::new(WaitAllSubagentsTool::new(ctx.clone())));
         registry.insert("abort_subagent".into(), Arc::new(AbortSubagentTool::new(ctx.clone())));
+        Ok(())
+    }
+
+    async fn on_turn_end(&self) -> Result<(), anyhow::Error> {
+        // Parent turn is over: no subagent may outlive it. First cancel the
+        // shared `run_cancel` token — every descendant `run_subagent` across
+        // the whole spawn tree subscribes to it and bails at its next await,
+        // each driving its *own* middlewares' `on_turn_end` so grandchildren
+        // cascade down too (real recursion across depth, no reliance on the
+        // runtime re-poling one layer before the next). Then `abort_all_and_clear`
+        // JoinHandle-aborts any still-running direct children that hadn't
+        // yielded to the token yet and clears this registry.
+        self.ctx.run_cancel.cancel();
+        self.ctx.registry.abort_all_and_clear();
         Ok(())
     }
 }

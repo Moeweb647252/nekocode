@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use nekocode_core::agent::{Agent, AgentEvent};
-use tokio::sync::mpsc::UnboundedSender;
+use nekocode_core::agent::Agent;
 
 /// Outcome of activating a subthread for background execution.
 pub enum ActivationOutcome {
@@ -35,15 +34,15 @@ pub trait ThreadController: Send + Sync {
     /// Called when the background run completes or errors.
     async fn deactivate(&self, subthread_id: u64);
 
-    /// Run `agent.run_loop(prompt, sender)` to completion. The API layer owns
+    /// Run `agent.run_loop(prompt, sink)` to completion. The API layer owns
     /// the `Agent` type, so it owns the call site; the subthread crate just
-    /// needs to await the result and react to Ok/Err. The `sender` is provided
+    /// needs to await the result and react to Ok/Err. The `sink` is provided
     /// by the caller (subthread crate) so it can discard events.
     async fn run(
         &self,
         agent: Arc<Agent>,
         prompt: String,
-        sender: UnboundedSender<AgentEvent>,
+        sink: nekocode_core::agent::AgentEventSink,
     ) -> Result<(), anyhow::Error>;
 
     /// Delete `subthread_id` and all of its descendants recursively: abort any

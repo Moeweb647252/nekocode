@@ -16,10 +16,9 @@ use nekocode_types::generate::{
     Message, MessageContent, MessageType, StopReason, StreamEvent, StreamEventData, Turn, Usage,
 };
 use nekocode_types::tool::{ToolCallResult, ToolCallResultInner, ToolRegistry};
-use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::error::AgentError;
-use crate::agent::{Agent, AgentEvent, AgentEventType};
+use crate::agent::{Agent, AgentEventType};
 use crate::middleware::AgentControlFlow;
 use crate::provider::ProviderEvent;
 use crate::types::{GenerateRequest, GenerateResponse};
@@ -29,7 +28,7 @@ impl Agent {
         &self,
         input: Vec<MessageContent>,
         old_turns: Vec<Turn>,
-        sender: UnboundedSender<AgentEvent>,
+        sink: crate::agent::AgentEventSink,
     ) -> Result<Turn, Turn> {
         // Flatten the working history into a single message list. Owned once,
         // reused as the immutable prefix when rebuilding each generation's
@@ -57,8 +56,20 @@ impl Agent {
         // outer middleware-driven regeneration loop.
         let base_system_prompt = format!("Working directory: {}\n", self.working_directory);
 
-        // Stream event index shared across the whole run.
-        let mut index = 0usize;
+        // Channel for middlewares to enqueue MiddlewareEvents; a merge relay
+        // wraps each into a uniquely-indexed AgentEvent on the parent stream.
+        // The relay shares the sink (same atomic index) so its events interleave
+        // contiguously with the run's own StreamEvents.
+        let (mev_tx, mev_rx) =
+            tokio::sync::mpsc::unbounded_channel::<crate::agent::MiddlewareEvent>();
+        let relay_sink = sink.clone();
+        let merge_relay = tokio::spawn(async move {
+            let mut mev_rx = mev_rx;
+            while let Some(mev) = mev_rx.recv().await {
+                // send failure (client gone) just stops relaying
+                let _ = relay_sink.send(crate::agent::AgentEventType::MiddlewareEvent(mev));
+            }
+        });
 
         // Run the body in an async block that borrows the mutable accumulator
         // state by reference and returns `Result<Turn, AgentError>`. The outer
@@ -78,7 +89,7 @@ impl Agent {
                 let mut tool_registry = ToolRegistry::new();
                 for middleware in self.middlewares.iter() {
                     middleware
-                        .before_generate(&mut request, &mut tool_registry)
+                        .before_generate(&mut request, &mut tool_registry, &mev_tx)
                         .await?;
                 }
                 request.tool_specs = tool_registry.specs();
@@ -89,8 +100,7 @@ impl Agent {
                     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                     let provider = self.provider.clone();
                     Self::send(
-                        &sender,
-                        &mut index,
+                        &sink,
                         StreamEventData::MessageStart(nekocode_types::generate::MessageMetadata {
                             role: nekocode_types::generate::Role::Assistant,
                         }),
@@ -105,7 +115,7 @@ impl Agent {
                             continue;
                         }
                         let stream_event: StreamEvent = (&event).into();
-                        Self::send(&sender, &mut index, stream_event.data)?;
+                        Self::send(&sink, stream_event.data)?;
                     }
                     let response = handle
                         .await
@@ -151,8 +161,7 @@ impl Agent {
                                     created_at: jiff::Timestamp::now(),
                                 };
                                 Self::send(
-                                    &sender,
-                                    &mut index,
+                                    &sink,
                                     stream_event.data.clone(),
                                 )?;
                                 generate_response.merge_stream_event(stream_event);
@@ -216,7 +225,7 @@ impl Agent {
             // accepted the output. Emit a single TurnEnd so clients can release
             // their "sending" state. This is distinct from MessageEnd, which
             // only closes one provider generation and may be followed by more.
-            Self::send(&sender, &mut index, StreamEventData::TurnEnd)?;
+            Self::send(&sink, StreamEventData::TurnEnd)?;
             Ok(Turn {
                 messages: current_messages.clone(),
                 usage: total_usage.clone(),
@@ -225,46 +234,45 @@ impl Agent {
         }
         .await;
 
-        match result {
+        let outcome: Result<Turn, Turn> = match result {
             Ok(turn) => Ok(turn),
             Err(e) => {
                 // Surface the error to the client as a terminal stream event,
                 // then hand back the partial turn so the API layer can decide
                 // whether to persist it (today it does not).
-                let _ = sender.send(AgentEvent {
-                    index,
-                    data: AgentEventType::StreamEvent(StreamEvent {
-                        data: StreamEventData::MessageEnd(StopReason::Error(e.to_string())),
-                        created_at: jiff::Timestamp::now(),
-                    }),
-                });
+                let _ = sink.send(AgentEventType::StreamEvent(StreamEvent {
+                    data: StreamEventData::MessageEnd(StopReason::Error(e.to_string())),
+                    created_at: jiff::Timestamp::now(),
+                }));
                 Err(Turn {
                     messages: current_messages,
                     usage: total_usage,
                     finished: false,
                 })
             }
+        };
+        // Cascade-abort every middleware's detached work first (so they stop
+        // producing mev events — e.g. subagents get torn down), then abort the
+        // merge relay. Runs on BOTH the Ok and Err exit paths, before run_loop
+        // returns. Order matters: middlewares must quiesce before the relay
+        // stops draining them.
+        for middleware in self.middlewares.iter() {
+            let _ = middleware.on_turn_end().await;
         }
+        merge_relay.abort();
+        outcome
     }
 
-    /// Send a stream event as an [`AgentEvent`], advancing the shared index.
-    /// A closed client channel fails the run.
+    /// Send a stream event as an [`crate::agent::AgentEvent`], allocating
+    /// the index from the shared sink. A closed client channel fails the run.
     fn send(
-        sender: &UnboundedSender<AgentEvent>,
-        index: &mut usize,
+        sink: &crate::agent::AgentEventSink,
         data: StreamEventData,
     ) -> Result<(), AgentError> {
-        sender
-            .send(AgentEvent {
-                index: *index,
-                data: AgentEventType::StreamEvent(StreamEvent {
-                    data,
-                    created_at: jiff::Timestamp::now(),
-                }),
-            })
-            .map_err(|e| AgentError::Other(anyhow::anyhow!("error sending agent event {e}")))?;
-        *index += 1;
-        Ok(())
+        sink.send(AgentEventType::StreamEvent(StreamEvent {
+            data,
+            created_at: jiff::Timestamp::now(),
+        }))
     }
 }
 
@@ -321,7 +329,11 @@ mod tests {
         .await;
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let turn = agent
-            .run_loop(text_input("hi"), Vec::new(), tx)
+            .run_loop(
+                text_input("hi"),
+                Vec::new(),
+                crate::agent::AgentEventSink::new(tx),
+            )
             .await
             .expect("run should succeed");
 
@@ -354,7 +366,11 @@ mod tests {
         .await;
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let turn = agent
-            .run_loop(text_input("hi"), Vec::new(), tx)
+            .run_loop(
+                text_input("hi"),
+                Vec::new(),
+                crate::agent::AgentEventSink::new(tx),
+            )
             .await
             .expect("run should succeed");
 
@@ -383,7 +399,11 @@ mod tests {
         .await;
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let err = agent
-            .run_loop(text_input("hi"), Vec::new(), tx)
+            .run_loop(
+                text_input("hi"),
+                Vec::new(),
+                crate::agent::AgentEventSink::new(tx),
+            )
             .await
             .expect_err("run should fail");
 
@@ -428,7 +448,11 @@ mod tests {
         .await;
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let turn = agent
-            .run_loop(text_input("hi"), Vec::new(), tx)
+            .run_loop(
+                text_input("hi"),
+                Vec::new(),
+                crate::agent::AgentEventSink::new(tx),
+            )
             .await
             .expect("run should succeed");
 
@@ -446,5 +470,49 @@ mod tests {
     #[test]
     fn _inject_middleware_type_is_referenced() {
         let _ = InjectMiddleware(AgentControlFlow::Output);
+    }
+
+    /// The merge relay wraps each `MiddlewareEvent` (emitted by a middleware
+    /// into `mev_tx`) into a uniquely-indexed `AgentEvent` on the parent
+    /// stream, coexisting with the run's own `StreamEvent`s. The shared
+    /// atomic index on the sink keeps all indices unique & contiguous.
+    #[tokio::test]
+    async fn merge_relay_forwards_middleware_event_with_unique_index() {
+        use crate::agent::test_mocks::RelayMiddleware;
+        use nekocode_types::generate::StreamEventData;
+
+        let agent = make_agent(
+            Arc::new(MockProvider::new(vec![text_msg("ok")])),
+            vec![Box::new(RelayMiddleware)],
+        )
+        .await;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = crate::agent::AgentEventSink::new(tx);
+        let _turn = agent
+            .run_loop(text_input("hi"), Vec::new(), sink)
+            .await
+            .expect("turn ok");
+
+        let mut events = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            events.push(ev);
+        }
+        // The merge-relayed MiddlewareEvent must be present.
+        let mev = events
+            .iter()
+            .find(|e| matches!(e.data, crate::agent::AgentEventType::MiddlewareEvent(_)))
+            .expect("middleware event relayed");
+        let _ = mev;
+        // Indices across all events must be unique and contiguous 0..n.
+        let mut idx: Vec<usize> = events.iter().map(|e| e.index).collect();
+        idx.sort();
+        let expected: Vec<usize> = (0..events.len()).collect();
+        assert_eq!(idx, expected, "indices unique & contiguous");
+        // And a StreamEvent (MessageEnd) coexists.
+        assert!(events.iter().any(|e| matches!(
+            e.data,
+            crate::agent::AgentEventType::StreamEvent(ref se)
+                if matches!(se.data, StreamEventData::MessageEnd(_))
+        )));
     }
 }

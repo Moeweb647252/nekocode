@@ -37,6 +37,7 @@ impl Middleware for NoopMiddleware {
         &self,
         _: &mut nekocode_core::types::GenerateRequest,
         _: &mut nekocode_types::tool::ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -171,6 +172,7 @@ fn make_ctx(allow_nested: bool, max_depth: u32, db: toasty::Db) -> SubagentConte
         depth: 0,
         max_depth,
         allow_nested,
+        run_cancel: tokio_util::sync::CancellationToken::new(),
     }
 }
 
@@ -189,14 +191,26 @@ fn make_pending_ctx(allow_nested: bool, max_depth: u32, db: toasty::Db) -> Subag
         depth: 0,
         max_depth,
         allow_nested,
+        run_cancel: tokio_util::sync::CancellationToken::new(),
     }
+}
+
+/// A mev_tx whose receiver is kept alive so sends succeed; for tests that
+/// don't assert on relayed events. The caller binds the receiver (e.g. to
+/// `_mev_rx`) so it stays alive for the test's lifetime — fine for a test.
+fn dummy_mev_tx() -> (
+    tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
+    tokio::sync::mpsc::UnboundedReceiver<nekocode_core::agent::MiddlewareEvent>,
+) {
+    tokio::sync::mpsc::unbounded_channel()
 }
 
 #[tokio::test]
 async fn spawn_wait_read_lifecycle() {
     let db = temp_db().await;
     let ctx = make_ctx(true, 1, db); // max_depth=1 → depth 0+1 <= 1, spawn allowed
-    let spawn = SpawnSubagentTool::new(ctx.clone());
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let spawn = SpawnSubagentTool::new(ctx.clone(), mev_tx);
     let res = spawn
         .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
         .await
@@ -238,7 +252,8 @@ async fn spawn_wait_read_lifecycle() {
 async fn spawn_unknown_profile_errors() {
     let db = temp_db().await;
     let ctx = make_ctx(true, 0, db);
-    let spawn = SpawnSubagentTool::new(ctx);
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let spawn = SpawnSubagentTool::new(ctx, mev_tx);
     let err = spawn
         .call(serde_json::json!({ "profile": "nope", "prompt": "hi" }))
         .await
@@ -250,7 +265,8 @@ async fn spawn_unknown_profile_errors() {
 async fn spawn_when_parent_disallows_nesting_errors() {
     let db = temp_db().await;
     let ctx = make_ctx(false, 5, db); // allow_nested=false
-    let spawn = SpawnSubagentTool::new(ctx);
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let spawn = SpawnSubagentTool::new(ctx, mev_tx);
     let err = spawn
         .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
         .await
@@ -262,7 +278,8 @@ async fn spawn_when_parent_disallows_nesting_errors() {
 async fn spawn_exceeding_max_depth_errors() {
     let db = temp_db().await;
     let ctx = make_ctx(true, 0, db); // max_depth=0 → depth 0+1 > 0
-    let spawn = SpawnSubagentTool::new(ctx);
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let spawn = SpawnSubagentTool::new(ctx, mev_tx);
     let err = spawn
         .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
         .await
@@ -277,7 +294,8 @@ async fn spawn_requests_unenabled_middleware_errors() {
     // requests "shell", which is not in the parent's enabled set.
     let mut ctx = make_ctx(true, 1, db);
     ctx.catalog = catalog_with_explorer_and_heavy();
-    let spawn = SpawnSubagentTool::new(ctx);
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let spawn = SpawnSubagentTool::new(ctx, mev_tx);
     let err = spawn
         .call(serde_json::json!({ "profile": "heavy", "prompt": "hi" }))
         .await
@@ -292,7 +310,8 @@ async fn spawn_requests_unenabled_middleware_errors() {
 async fn wait_any_timeout_against_pending_subagent() {
     let db = temp_db().await;
     let ctx = make_pending_ctx(true, 1, db);
-    let spawn = SpawnSubagentTool::new(ctx.clone());
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let spawn = SpawnSubagentTool::new(ctx.clone(), mev_tx);
     let res = spawn
         .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
         .await
@@ -326,4 +345,85 @@ async fn wait_any_timeout_against_pending_subagent() {
         .call(serde_json::json!({ "agent_id": agent_id }))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn spawn_subagent_relays_child_events_as_middleware_event() {
+    let db = temp_db().await;
+    let ctx = make_ctx(true, 1, db);
+    let (mev_tx, mut mev_rx) = tokio::sync::mpsc::unbounded_channel();
+    let spawn = SpawnSubagentTool::new(ctx.clone(), mev_tx);
+
+    let res = spawn
+        .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
+        .await
+        .unwrap();
+    let agent_id = res.get("agent_id").unwrap().as_u64().unwrap();
+
+    // Wait for the subagent to finish so the relay has flushed everything.
+    let wait = WaitAnySubagentTool::new(ctx.clone());
+    let _ = wait
+        .call(serde_json::json!({ "agent_ids": [agent_id], "timeout": 5.0 }))
+        .await
+        .unwrap();
+
+    let mut relayed = Vec::new();
+    while let Ok(mev) = mev_rx.try_recv() {
+        relayed.push(mev);
+    }
+    assert!(!relayed.is_empty(), "at least one child event relayed");
+    for mev in &relayed {
+        assert_eq!(mev.source, "subagent");
+        assert_eq!(mev.source_id, agent_id);
+        assert_eq!(mev.event_type, "agentEvent");
+        assert!(mev.data.is_object(), "data is the serialized child AgentEvent");
+    }
+    // The child emits at least a streamEvent; ensure it's in the relayed set.
+    assert!(relayed.iter().any(|mev| {
+        mev.data.get("data").and_then(|d| d.get("type")).and_then(|t| t.as_str())
+            == Some("streamEvent")
+    }));
+}
+
+#[tokio::test]
+async fn abort_all_and_clear_cancels_child_token() {
+    let registry = Arc::new(SubagentRegistry::new());
+    let id = registry.allocate_running();
+    let cancel = registry.cancel_token(id).expect("token present while running");
+    assert!(!cancel.is_cancelled());
+    let aborted = registry.abort_all_and_clear();
+    assert_eq!(aborted, vec![id]);
+    assert!(cancel.is_cancelled(), "cancel token fired by abort_all_and_clear");
+}
+
+#[tokio::test]
+async fn on_turn_end_aborts_running_subagent() {
+    use nekocode_subagent::SubagentMiddleware;
+    let db = temp_db().await;
+    let ctx = make_pending_ctx(true, 1, db);
+    let (mev_tx, _mev_rx) = dummy_mev_tx();
+    let mw = SubagentMiddleware::from_context(ctx.clone());
+    let mut reg = nekocode_core::types::GenerateRequest::default();
+    let mut tools = nekocode_types::tool::ToolRegistry::new();
+    mw.before_generate(&mut reg, &mut tools, &mev_tx).await.unwrap();
+    let spawn = tools.get("spawn_subagent").unwrap().clone();
+    let res = spawn
+        .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
+        .await
+        .unwrap();
+    let agent_id = res.get("agent_id").unwrap().as_u64().unwrap();
+    assert_eq!(
+        ctx.registry.run_state(agent_id),
+        nekocode_subagent::SubagentRunState::Running
+    );
+
+    // Parent turn ends:
+    mw.on_turn_end().await.unwrap();
+
+    // The never-completing subagent must be gone from the registry.
+    assert_eq!(
+        ctx.registry.run_state(agent_id),
+        nekocode_subagent::SubagentRunState::Idle,
+        "subagent evicted by on_turn_end"
+    );
 }

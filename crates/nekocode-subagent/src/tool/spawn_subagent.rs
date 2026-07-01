@@ -11,11 +11,15 @@ use crate::SubagentContext;
 
 pub struct SpawnSubagentTool {
     ctx: SubagentContext,
+    mev_tx: tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
 }
 
 impl SpawnSubagentTool {
-    pub fn new(ctx: SubagentContext) -> Self {
-        Self { ctx }
+    pub fn new(
+        ctx: SubagentContext,
+        mev_tx: tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
+    ) -> Self {
+        Self { ctx, mev_tx }
     }
 }
 
@@ -92,6 +96,11 @@ impl Tool for SpawnSubagentTool {
             .collect();
 
         let agent_id = self.ctx.registry.allocate_running();
+        let child_cancel = self
+            .ctx
+            .registry
+            .cancel_token(agent_id)
+            .expect("token present right after allocate_running");
         let child_extensions = Arc::new(dashmap::DashMap::new());
 
         // Build isolated middleware instances via the factory.
@@ -130,7 +139,11 @@ impl Tool for SpawnSubagentTool {
             crate::SubagentConfig { max_depth: self.ctx.max_depth },
             self.ctx.depth + 1,
             profile.allow_nested,
-        );
+        )
+        // Re-point the child's run_cancel at the parent's so the whole spawn
+        // tree shares one cancellation flag: the root's on_turn_end cancels
+        // it once and every descendant run_subagent bails concurrently.
+        .with_run_cancel(self.ctx.run_cancel.clone());
         child_middlewares.push(Box::new(child_subagent_mw));
 
         let child = Agent {
@@ -142,16 +155,42 @@ impl Tool for SpawnSubagentTool {
             extensions: child_extensions,
         };
 
-        // Drained-sender pattern: a companion task drains the event channel so
-        // run_loop's send() never blocks when no one consumes.
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        // Relay pattern: a companion task wraps each child AgentEvent as a
+        // MiddlewareEvent and forwards it to the parent's mev_tx (which
+        // run_loop's merge relay turns into a uniquely-indexed AgentEvent on
+        // the parent stream). Replaces the old drain-and-discard task.
+        let (child_tx, mut child_rx) = mpsc::unbounded_channel();
+        let mev_tx = self.mev_tx.clone();
+        let relay_target_agent_id = agent_id;
         let registry = self.ctx.registry.clone();
+        let run_cancel = self.ctx.run_cancel.clone();
+
         let handle = tokio::spawn(async move {
-            let drain = tokio::spawn(async move {
-                while rx.recv().await.is_some() {}
+            let relay = tokio::spawn(async move {
+                while let Some(child_event) = child_rx.recv().await {
+                    let mev = nekocode_core::agent::MiddlewareEvent {
+                        source: std::borrow::Cow::Borrowed("subagent"),
+                        source_id: relay_target_agent_id,
+                        event_type: "agentEvent".into(),
+                        data: serde_json::to_value(&child_event)
+                            .unwrap_or(serde_json::Value::Null),
+                    };
+                    // Parent stream may have closed: send failure just stops relaying.
+                    let _ = mev_tx.send(mev);
+                }
             });
-            run_subagent(agent_id, child, prompt, registry, tx).await;
-            drain.abort();
+            run_subagent(
+                agent_id,
+                child,
+                prompt,
+                registry,
+                nekocode_core::agent::AgentEventSink::new(child_tx),
+                (*child_cancel).clone(),
+                run_cancel,
+            )
+            .await;
+            // run_subagent returns → child run_loop dropped child_tx → relay ends.
+            relay.await.ok();
         });
 
         self.ctx.registry.set_running(agent_id, handle);

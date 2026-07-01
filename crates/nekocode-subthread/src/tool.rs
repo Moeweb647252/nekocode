@@ -796,7 +796,9 @@ impl Tool for StartSubthreadTool {
                 while rx.recv().await.is_some() {}
             });
 
-            let result = controller_for_task.run(agent, prompt, tx).await;
+            let result = controller_for_task
+                .run(agent, prompt, nekocode_core::agent::AgentEventSink::new(tx))
+                .await;
             drain.abort();
 
             match result {

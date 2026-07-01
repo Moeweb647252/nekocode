@@ -121,6 +121,7 @@ impl Middleware for EchoMiddleware {
         &self,
         _req: &mut GenerateRequest,
         reg: &mut ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<crate::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         reg.insert("echo".into(), Arc::new(EchoTool));
         Ok(())
@@ -145,6 +146,7 @@ impl Middleware for InjectMiddleware {
         &self,
         _req: &mut GenerateRequest,
         _reg: &mut ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<crate::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -174,6 +176,7 @@ impl Middleware for OneShotRegenerateMiddleware {
         &self,
         _req: &mut GenerateRequest,
         _reg: &mut ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<crate::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -190,6 +193,30 @@ impl Middleware for OneShotRegenerateMiddleware {
                 content: self.inject.clone(),
             });
         }
+        Ok(())
+    }
+}
+
+// ── RelayMiddleware ──
+
+/// Emits one MiddlewareEvent into the mev_tx it receives in
+/// `before_generate`. Used to test run_loop's merge relay.
+pub struct RelayMiddleware;
+
+#[async_trait]
+impl Middleware for RelayMiddleware {
+    async fn before_generate(
+        &self,
+        _: &mut GenerateRequest,
+        _: &mut ToolRegistry,
+        mev_tx: &tokio::sync::mpsc::UnboundedSender<crate::agent::MiddlewareEvent>,
+    ) -> Result<(), anyhow::Error> {
+        let _ = mev_tx.send(crate::agent::MiddlewareEvent {
+            source: std::borrow::Cow::Borrowed("test"),
+            source_id: 1,
+            event_type: "ping".into(),
+            data: serde_json::json!({ "hello": "world" }),
+        });
         Ok(())
     }
 }

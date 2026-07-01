@@ -67,6 +67,7 @@ impl Middleware for SubthreadMiddleware {
         &self,
         _request: &mut nekocode_core::types::GenerateRequest,
         registry: &mut ToolRegistry,
+        _: &tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
     ) -> Result<(), anyhow::Error> {
         let ctx = self.ctx.clone();
         registry.insert(
