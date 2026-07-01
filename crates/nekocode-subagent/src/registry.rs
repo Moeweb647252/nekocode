@@ -47,11 +47,13 @@ pub struct SubagentState {
     // Wrapped in `Arc` so the `RwLock` can be cloned out of the DashMap guard
     // before writing (see `set_finished`), mirroring `notify: Arc<Notify>`.
     pub result: Arc<RwLock<Option<SubagentRunResult>>>,
-    /// Cancelled by `abort_all_and_clear` so the child's `run_subagent` bails
-    /// at its next await. On natural completion the child run_loop's own
-    /// on_turn_end dispatch cascades; on cancellation `run_subagent`'s cancel
-    /// branch drives the child middlewares' `on_turn_end` explicitly, so
-    /// grandchildren are aborted either way (real recursion across depth).
+    /// Per-child cancellation token, fired by `abort_all_and_clear` (batch) and
+    /// `abort_subagent` (single). This is the per-agent abort path; the
+    /// cross-depth TREE-WIDE cancellation lives on `SubagentContext.run_cancel`
+    /// (a single flag the root mints and every descendant shares), which the
+    /// root's `on_turn_end` cancels so the whole spawn tree bails concurrently.
+    /// This per-state `cancel` is the hard backstop for tasks that haven't
+    /// yielded to `run_cancel` yet (and the path for explicit single-agent abort).
     pub cancel: Arc<tokio_util::sync::CancellationToken>,
 }
 
@@ -153,11 +155,14 @@ impl SubagentRegistry {
     /// them), aborting in-flight task handles where present.
     pub fn abort_all_and_clear(&self) -> Vec<u64> {
         let mut aborted = Vec::new();
-        // Cancel every child's run_loop first — gives each layer a chance to
-        // bail at its next await. The child's run_subagent cancel branch then
-        // drives its own middlewares' on_turn_end → abort_all_and_clear (real
-        // recursion across nesting depth). JoinHandle::abort() below is the
-        // hard guarantee for tasks that don't yield to the token promptly.
+        // Cancel every direct child's per-state token so their run_subagent select!
+        // bails at its next await. (Note: cross-DEPTH tree-wide cancellation is
+        // driven by the shared `run_cancel` on SubagentContext, cancelled once
+        // by the root's on_turn_end — every descendant subscribes to the same
+        // flag and ends concurrently. This per-state cancel handles direct
+        // children/abort_subagent and is the backstop for tasks not yet
+        // polled onto run_cancel.) JoinHandle::abort() below is the hard
+        // guarantee for tasks that don't yield to either token promptly.
         for entry in self.states.iter() {
             entry.cancel.cancel();
             aborted.push(entry.agent_id);

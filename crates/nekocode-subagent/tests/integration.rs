@@ -172,6 +172,7 @@ fn make_ctx(allow_nested: bool, max_depth: u32, db: toasty::Db) -> SubagentConte
         depth: 0,
         max_depth,
         allow_nested,
+        run_cancel: tokio_util::sync::CancellationToken::new(),
     }
 }
 
@@ -190,6 +191,7 @@ fn make_pending_ctx(allow_nested: bool, max_depth: u32, db: toasty::Db) -> Subag
         depth: 0,
         max_depth,
         allow_nested,
+        run_cancel: tokio_util::sync::CancellationToken::new(),
     }
 }
 

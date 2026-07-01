@@ -139,7 +139,11 @@ impl Tool for SpawnSubagentTool {
             crate::SubagentConfig { max_depth: self.ctx.max_depth },
             self.ctx.depth + 1,
             profile.allow_nested,
-        );
+        )
+        // Re-point the child's run_cancel at the parent's so the whole spawn
+        // tree shares one cancellation flag: the root's on_turn_end cancels
+        // it once and every descendant run_subagent bails concurrently.
+        .with_run_cancel(self.ctx.run_cancel.clone());
         child_middlewares.push(Box::new(child_subagent_mw));
 
         let child = Agent {
@@ -159,6 +163,7 @@ impl Tool for SpawnSubagentTool {
         let mev_tx = self.mev_tx.clone();
         let relay_target_agent_id = agent_id;
         let registry = self.ctx.registry.clone();
+        let run_cancel = self.ctx.run_cancel.clone();
 
         let handle = tokio::spawn(async move {
             let relay = tokio::spawn(async move {
@@ -181,9 +186,8 @@ impl Tool for SpawnSubagentTool {
                 registry,
                 nekocode_core::agent::AgentEventSink::new(child_tx),
                 (*child_cancel).clone(),
+                run_cancel,
             )
-            // child_cancel is Arc<CancellationToken>; cloning the Arc shares
-            // the same token so abort_all_and_clear's cancel reaches this run.
             .await;
             // run_subagent returns → child run_loop dropped child_tx → relay ends.
             relay.await.ok();
