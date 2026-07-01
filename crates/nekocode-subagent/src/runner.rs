@@ -21,7 +21,7 @@ pub async fn run_subagent(
         .run_loop(
             vec![MessageContent::Text { content: prompt }],
             Vec::new(),
-            sender,
+            nekocode_core::agent::AgentEventSink::new(sender),
         )
         .await;
     match result {

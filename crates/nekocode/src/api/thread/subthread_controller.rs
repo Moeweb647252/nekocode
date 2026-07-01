@@ -112,7 +112,7 @@ impl ThreadController for ApiThreadController {
             .run_loop(
                 vec![MessageContent::Text { content: prompt }],
                 old_turns,
-                sender,
+                nekocode_core::agent::AgentEventSink::new(sender),
             )
             .await
         {

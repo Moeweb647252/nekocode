@@ -69,7 +69,11 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
     let user_input = payload.user_input;
     let handle = tokio::spawn(async move {
         agent
-            .run_loop(vec![MessageContent::Text { content: user_input }], old_turns, tx)
+            .run_loop(
+                vec![MessageContent::Text { content: user_input }],
+                old_turns,
+                nekocode_core::agent::AgentEventSink::new(tx),
+            )
             .await
     });
 

@@ -16,10 +16,9 @@ use nekocode_types::generate::{
     Message, MessageContent, MessageType, StopReason, StreamEvent, StreamEventData, Turn, Usage,
 };
 use nekocode_types::tool::{ToolCallResult, ToolCallResultInner, ToolRegistry};
-use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::error::AgentError;
-use crate::agent::{Agent, AgentEvent, AgentEventType};
+use crate::agent::{Agent, AgentEventType};
 use crate::middleware::AgentControlFlow;
 use crate::provider::ProviderEvent;
 use crate::types::{GenerateRequest, GenerateResponse};
@@ -29,7 +28,7 @@ impl Agent {
         &self,
         input: Vec<MessageContent>,
         old_turns: Vec<Turn>,
-        sender: UnboundedSender<AgentEvent>,
+        sink: crate::agent::AgentEventSink,
     ) -> Result<Turn, Turn> {
         // Flatten the working history into a single message list. Owned once,
         // reused as the immutable prefix when rebuilding each generation's
@@ -56,9 +55,6 @@ impl Agent {
         // (no DB query) and survives both the inner tool-call loop and the
         // outer middleware-driven regeneration loop.
         let base_system_prompt = format!("Working directory: {}\n", self.working_directory);
-
-        // Stream event index shared across the whole run.
-        let mut index = 0usize;
 
         // TEMPORARY: replaced by the real mev_tx channel + merge relay in Task 5.
         let (mev_tx, _mev_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -92,8 +88,7 @@ impl Agent {
                     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                     let provider = self.provider.clone();
                     Self::send(
-                        &sender,
-                        &mut index,
+                        &sink,
                         StreamEventData::MessageStart(nekocode_types::generate::MessageMetadata {
                             role: nekocode_types::generate::Role::Assistant,
                         }),
@@ -108,7 +103,7 @@ impl Agent {
                             continue;
                         }
                         let stream_event: StreamEvent = (&event).into();
-                        Self::send(&sender, &mut index, stream_event.data)?;
+                        Self::send(&sink, stream_event.data)?;
                     }
                     let response = handle
                         .await
@@ -154,8 +149,7 @@ impl Agent {
                                     created_at: jiff::Timestamp::now(),
                                 };
                                 Self::send(
-                                    &sender,
-                                    &mut index,
+                                    &sink,
                                     stream_event.data.clone(),
                                 )?;
                                 generate_response.merge_stream_event(stream_event);
@@ -219,7 +213,7 @@ impl Agent {
             // accepted the output. Emit a single TurnEnd so clients can release
             // their "sending" state. This is distinct from MessageEnd, which
             // only closes one provider generation and may be followed by more.
-            Self::send(&sender, &mut index, StreamEventData::TurnEnd)?;
+            Self::send(&sink, StreamEventData::TurnEnd)?;
             Ok(Turn {
                 messages: current_messages.clone(),
                 usage: total_usage.clone(),
@@ -234,13 +228,10 @@ impl Agent {
                 // Surface the error to the client as a terminal stream event,
                 // then hand back the partial turn so the API layer can decide
                 // whether to persist it (today it does not).
-                let _ = sender.send(AgentEvent {
-                    index,
-                    data: AgentEventType::StreamEvent(StreamEvent {
-                        data: StreamEventData::MessageEnd(StopReason::Error(e.to_string())),
-                        created_at: jiff::Timestamp::now(),
-                    }),
-                });
+                let _ = sink.send(AgentEventType::StreamEvent(StreamEvent {
+                    data: StreamEventData::MessageEnd(StopReason::Error(e.to_string())),
+                    created_at: jiff::Timestamp::now(),
+                }));
                 Err(Turn {
                     messages: current_messages,
                     usage: total_usage,
@@ -250,24 +241,16 @@ impl Agent {
         }
     }
 
-    /// Send a stream event as an [`AgentEvent`], advancing the shared index.
-    /// A closed client channel fails the run.
+    /// Send a stream event as an [`crate::agent::AgentEvent`], allocating
+    /// the index from the shared sink. A closed client channel fails the run.
     fn send(
-        sender: &UnboundedSender<AgentEvent>,
-        index: &mut usize,
+        sink: &crate::agent::AgentEventSink,
         data: StreamEventData,
     ) -> Result<(), AgentError> {
-        sender
-            .send(AgentEvent {
-                index: *index,
-                data: AgentEventType::StreamEvent(StreamEvent {
-                    data,
-                    created_at: jiff::Timestamp::now(),
-                }),
-            })
-            .map_err(|e| AgentError::Other(anyhow::anyhow!("error sending agent event {e}")))?;
-        *index += 1;
-        Ok(())
+        sink.send(AgentEventType::StreamEvent(StreamEvent {
+            data,
+            created_at: jiff::Timestamp::now(),
+        }))
     }
 }
 
@@ -324,7 +307,11 @@ mod tests {
         .await;
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let turn = agent
-            .run_loop(text_input("hi"), Vec::new(), tx)
+            .run_loop(
+                text_input("hi"),
+                Vec::new(),
+                crate::agent::AgentEventSink::new(tx),
+            )
             .await
             .expect("run should succeed");
 
@@ -357,7 +344,11 @@ mod tests {
         .await;
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let turn = agent
-            .run_loop(text_input("hi"), Vec::new(), tx)
+            .run_loop(
+                text_input("hi"),
+                Vec::new(),
+                crate::agent::AgentEventSink::new(tx),
+            )
             .await
             .expect("run should succeed");
 
@@ -386,7 +377,11 @@ mod tests {
         .await;
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let err = agent
-            .run_loop(text_input("hi"), Vec::new(), tx)
+            .run_loop(
+                text_input("hi"),
+                Vec::new(),
+                crate::agent::AgentEventSink::new(tx),
+            )
             .await
             .expect_err("run should fail");
 
@@ -431,7 +426,11 @@ mod tests {
         .await;
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let turn = agent
-            .run_loop(text_input("hi"), Vec::new(), tx)
+            .run_loop(
+                text_input("hi"),
+                Vec::new(),
+                crate::agent::AgentEventSink::new(tx),
+            )
             .await
             .expect("run should succeed");
 
