@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use dashmap::Entry::{Occupied, Vacant};
-use nekocode_core::agent::{Agent, AgentEvent};
+use nekocode_core::agent::Agent;
 use nekocode_entities::thread::Thread;
 use nekocode_subthread::controller::{ActivationOutcome, ThreadController};
 use nekocode_types::generate::MessageContent;
-use tokio::sync::mpsc::UnboundedSender;
 
 use crate::api::generate::turn_io;
 use crate::api::thread::{MiddlewareBuildContext, build_middlewares};
@@ -102,7 +101,7 @@ impl ThreadController for ApiThreadController {
         &self,
         agent: Arc<Agent>,
         prompt: String,
-        sender: UnboundedSender<AgentEvent>,
+        sink: nekocode_core::agent::AgentEventSink,
     ) -> Result<(), anyhow::Error> {
         // Load history and persist results in the API layer; the agent itself
         // is storage-free. Agent::run_loop takes &self; deref the Arc for the
@@ -112,7 +111,7 @@ impl ThreadController for ApiThreadController {
             .run_loop(
                 vec![MessageContent::Text { content: prompt }],
                 old_turns,
-                nekocode_core::agent::AgentEventSink::new(sender),
+                sink,
             )
             .await
         {

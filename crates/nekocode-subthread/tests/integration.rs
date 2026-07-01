@@ -63,7 +63,7 @@ impl ThreadController for NoopController {
         &self,
         _: Arc<nekocode_core::agent::Agent>,
         _: String,
-        _: tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::AgentEvent>,
+        _: nekocode_core::agent::AgentEventSink,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }

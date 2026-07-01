@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
-use nekocode_core::agent::{Agent, AgentEvent};
+use nekocode_core::agent::Agent;
 use nekocode_types::generate::MessageContent;
-use tokio::sync::mpsc::UnboundedSender;
 
 use crate::registry::{SubagentRegistry, SubagentRunResult};
 
 /// Run a child agent's `run_loop` once with the given prompt and capture the
-/// resulting `Turn` into the registry. The `sender` is provided by the
+/// resulting `Turn` into the registry. The `sink` is provided by the
 /// caller (the spawn tool sets up a drained channel so `run_loop`'s `send()`
 /// never blocks). `old_turns` is always empty (single-turn).
 pub async fn run_subagent(
@@ -15,13 +14,13 @@ pub async fn run_subagent(
     child: Agent,
     prompt: String,
     registry: Arc<SubagentRegistry>,
-    sender: UnboundedSender<AgentEvent>,
+    sink: nekocode_core::agent::AgentEventSink,
 ) {
     let result = child
         .run_loop(
             vec![MessageContent::Text { content: prompt }],
             Vec::new(),
-            nekocode_core::agent::AgentEventSink::new(sender),
+            sink,
         )
         .await;
     match result {
@@ -134,7 +133,14 @@ mod tests {
         let id = registry.allocate_running();
         let child = make_child(Arc::new(MockProvider::new(vec![text_msg("result")]))).await;
         let (tx, _rx) = mpsc::unbounded_channel();
-        run_subagent(id, child, "do thing".into(), registry.clone(), tx).await;
+        run_subagent(
+            id,
+            child,
+            "do thing".into(),
+            registry.clone(),
+            nekocode_core::agent::AgentEventSink::new(tx),
+        )
+        .await;
         assert!(matches!(registry.run_state(id), crate::registry::SubagentRunState::Finished));
         let result = registry.result(id).expect("result stored");
         assert!(result.finished);
@@ -149,7 +155,14 @@ mod tests {
         // Empty responses → first stream_generate errors ("mock exhausted").
         let child = make_child(Arc::new(MockProvider::new(Vec::new()))).await;
         let (tx, _rx) = mpsc::unbounded_channel();
-        run_subagent(id, child, "do thing".into(), registry.clone(), tx).await;
+        run_subagent(
+            id,
+            child,
+            "do thing".into(),
+            registry.clone(),
+            nekocode_core::agent::AgentEventSink::new(tx),
+        )
+        .await;
         assert!(matches!(
             registry.run_state(id),
             crate::registry::SubagentRunState::Error(_)

@@ -150,7 +150,8 @@ impl Tool for SpawnSubagentTool {
             let drain = tokio::spawn(async move {
                 while rx.recv().await.is_some() {}
             });
-            run_subagent(agent_id, child, prompt, registry, tx).await;
+            run_subagent(agent_id, child, prompt, registry, nekocode_core::agent::AgentEventSink::new(tx))
+                .await;
             drain.abort();
         });
 
