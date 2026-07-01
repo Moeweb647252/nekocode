@@ -167,9 +167,13 @@ makes the source change mechanical; no logic change required.
 
 ## §4 — `spawn_subagent` relay: child AgentEvent → MiddlewareEvent
 
-`SubagentContext` gains `mev_tx: UnboundedSender<MiddlewareEvent>`, populated by
-`SubagentMiddleware::before_generate` from the sink it receives. `ctx.clone()`
-carries it into every tool; only `spawn_subagent` reads it.
+`SpawnSubagentTool` gains a `mev_tx: UnboundedSender<MiddlewareEvent>` field,
+populated at insertion time. `SubagentMiddleware::before_generate` receives
+`&mev_tx` from `run_loop` and passes `mev_tx.clone()` into
+`SpawnSubagentTool::new(ctx.clone(), mev_tx.clone())` when it inserts the tool.
+The tool holds its own `mev_tx`; no interior mutability, no dummy field on
+`SubagentContext` (matches the existing plain-field style of `SubagentContext`).
+Only `spawn_subagent` reads it.
 
 `spawn_subagent.rs` (replacing lines 145-157):
 ```rust
@@ -262,8 +266,8 @@ or any later fire-and-forget producer can opt into the same hook.
 | `nekocode-core/src/middleware.rs` | `before_generate` gets `&UnboundedSender<MiddlewareEvent>`; default `on_turn_end` |
 | `nekocode-core/src/agent/new_agent.rs` | `run_loop` takes `AgentEventSink`; build `mev_tx` + merge relay; `Agent::send` via sink; call `on_turn_end`; pass `&mev_tx` to `before_generate` |
 | `nekocode-core/src/agent/test_mocks.rs` | mock middlewares accept the new param (ignore) |
-| `nekocode-subagent/src/middleware.rs` | `SubagentContext` gains `mev_tx`; `before_generate` writes it into ctx; impl `on_turn_end` |
-| `nekocode-subagent/src/tool/spawn_subagent.rs` | drained → relay (§4); clone child `cancel_token` |
+| `nekocode-subagent/src/middleware.rs` | `SubagentMiddleware::before_generate` passes `mev_tx.clone()` into `SpawnSubagentTool::new`; impl `on_turn_end` |
+| `nekocode-subagent/src/tool/spawn_subagent.rs` | `SpawnSubagentTool` gains `mev_tx` field; drained → relay (§4); clone child `cancel_token` |
 | `nekocode-subagent/src/registry.rs` | `SubagentState.cancel`; `abort_all_and_clear` cancels first |
 | `nekocode-subagent/src/runner.rs` + child `SubagentMiddleware::new` | child gets its *own* `mev_tx` from its own `run_loop` |
 | `nekocode/src/api/generate/stream_generate.rs` | wrap `tx` in `AgentEventSink::new(tx)` before `run_loop` |
