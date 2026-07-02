@@ -25,13 +25,10 @@ pub async fn list_shells(
         .read()
         .await
         .extensions
-        .get("shell")
+        .get::<dashmap::DashMap<u32, ShellTaskState>>()
         .ok_or_else(|| {
             ApiError::ItemNotFound(String::from("shell middleware not configured for thread"))
-        })?
-        .downcast_ref::<Arc<dashmap::DashMap<u32, ShellTaskState>>>()
-        .ok_or_else(|| ApiError::ItemNotFound(String::from("shell middleware ext")))?
-        .clone();
+        })?;
     let shell_states: Vec<serde_json::Value> = shell_states
         .iter()
         .map(|entry| entry.value().clone())
