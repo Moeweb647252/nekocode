@@ -1,4 +1,4 @@
-use std::sync::{Arc, atomic};
+use std::sync::atomic;
 
 use nekocode_shell::ShellTaskState;
 use serde_json::json;
