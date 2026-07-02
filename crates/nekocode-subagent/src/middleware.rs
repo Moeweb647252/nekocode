@@ -39,7 +39,8 @@ pub struct SubagentContext {
 
 /// The subagent middleware. Registered on a parent agent's middleware chain;
 /// in `before_generate` it inserts the 6 subagent tools and publishes the
-/// per-parent `SubagentRegistry` to `Agent.extensions["subagent"]`.
+/// per-parent `SubagentRegistry` into `Agent.extensions` (stored as the typed
+/// slot `TypeId::of::<Arc<SubagentRegistry>>()`).
 pub struct SubagentMiddleware {
     ctx: SubagentContext,
 }

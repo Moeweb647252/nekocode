@@ -29,7 +29,8 @@ impl SubthreadRunState {
 /// the subthread's `thread_id`.
 ///
 /// Ownership: a `SubthreadRegistry` belongs to exactly one parent thread
-/// (it lives in that parent's `Agent.extensions` under the key `"subthread"`),
+/// (it lives in that parent's `Agent.extensions` as the typed slot
+/// `TypeId::of::<Arc<SubthreadRegistry>>()`),
 /// so `SubthreadState` does not carry a `parent_thread_id` — its container
 /// already encodes the parent. This mirrors how `nekocode-shell`'s
 /// `shell_states` is owned by the thread that spawned the shells.
@@ -53,7 +54,8 @@ impl SubthreadState {
 }
 
 /// Per-parent map of subthread run state. Owned by the parent thread's
-/// `Agent.extensions` (key `"subthread"`), shared via `Arc` with the parent's
+/// `Agent.extensions` (typed slot `TypeId::of::<Arc<SubthreadRegistry>>()`),
+/// shared via `Arc` with the parent's
 /// `SubthreadMiddleware` and its nine tools. NOT a process-global singleton —
 /// each parent thread has its own, so subthread state is owned by the parent
 /// that spawned it.
