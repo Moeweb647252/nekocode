@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use dashmap::Entry::{Occupied, Vacant};
 use nekocode_core::agent::Agent;
+use nekocode_core::extensions::Extensions;
 use tokio::sync::RwLock;
 
 use crate::api::prelude::*;
@@ -44,7 +45,7 @@ pub async fn activate_thread(
     let provider: Arc<dyn nekocode_core::provider::Provider> =
         Arc::from(nekocode_provider::build_from_config(&model_config.data));
 
-    let extensions = Arc::new(dashmap::DashMap::new());
+    let extensions = Extensions::new();
 
     let subthread_controller = std::sync::Arc::new(
         crate::api::thread::subthread_controller::ApiThreadController {

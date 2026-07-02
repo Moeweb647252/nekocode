@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use dashmap::Entry::{Occupied, Vacant};
 use nekocode_core::agent::Agent;
+use nekocode_core::extensions::Extensions;
 use nekocode_entities::thread::Thread;
 use nekocode_subthread::controller::{ActivationOutcome, ThreadController};
 use nekocode_types::generate::MessageContent;
@@ -48,7 +49,7 @@ impl ThreadController for ApiThreadController {
         let provider: Arc<dyn nekocode_core::provider::Provider> =
             Arc::from(nekocode_provider::build_from_config(&model_config.data));
 
-        let extensions = Arc::new(dashmap::DashMap::new());
+        let extensions = Extensions::new();
 
         let ctx = MiddlewareBuildContext {
             db: self.db.clone(),

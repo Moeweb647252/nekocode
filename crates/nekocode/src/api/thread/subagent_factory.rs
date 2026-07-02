@@ -1,7 +1,4 @@
-use std::any::Any;
-use std::sync::Arc;
-
-use dashmap::DashMap;
+use nekocode_core::extensions::Extensions;
 use nekocode_core::middleware::{Middleware, MiddlewareSpec};
 use nekocode_subagent::SubagentMiddlewareFactory;
 
@@ -22,7 +19,7 @@ impl SubagentMiddlewareFactory for ApiSubagentMiddlewareFactory {
         &self,
         spec: MiddlewareSpec,
         subagent_id: u64,
-        extensions: Arc<DashMap<String, Box<dyn Any + Send + Sync>>>,
+        extensions: Extensions,
     ) -> Box<dyn Middleware> {
         match spec.name.as_str() {
             "shell" => Box::new(nekocode_shell::Shell::new(

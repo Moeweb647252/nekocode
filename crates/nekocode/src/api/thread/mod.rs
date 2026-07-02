@@ -2,6 +2,7 @@ use axum::routing::{get, post};
 use std::sync::Arc;
 
 use crate::AppState;
+use nekocode_core::extensions::Extensions;
 
 pub mod activate;
 pub mod create;
@@ -28,7 +29,7 @@ pub fn router() -> axum::Router<AppState> {
 pub(crate) struct MiddlewareBuildContext {
     pub db: toasty::Db,
     pub config: Arc<tokio::sync::RwLock<nekocode_types::config::Config>>,
-    pub extensions: Arc<dashmap::DashMap<String, Box<dyn std::any::Any + Send + Sync>>>,
+    pub extensions: Extensions,
     pub thread_id: u64,
     pub working_directory: String,
     pub subthread_controller: Arc<dyn nekocode_subthread::controller::ThreadController>,
