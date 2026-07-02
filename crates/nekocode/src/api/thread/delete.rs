@@ -125,13 +125,7 @@ async fn abort_subthread_tasks(
     let registry: Option<Arc<nekocode_subthread::SubthreadRegistry>> =
         if let Some(agent_entry) = active_threads.get(&thread_id) {
             let agent = agent_entry.value().read().await;
-            agent
-                .extensions
-                .get(nekocode_subthread::middleware::SUBTHREAD_EXTENSION_KEY)
-                .and_then(|b| {
-                    b.downcast_ref::<Arc<nekocode_subthread::SubthreadRegistry>>()
-                        .cloned()
-                })
+            agent.extensions.get::<nekocode_subthread::SubthreadRegistry>()
         } else {
             None
         };
@@ -156,13 +150,7 @@ async fn abort_subagent_tasks(
     let registry: Option<Arc<nekocode_subagent::SubagentRegistry>> =
         if let Some(agent_entry) = active_threads.get(&thread_id) {
             let agent = agent_entry.value().read().await;
-            agent
-                .extensions
-                .get(nekocode_subagent::SUBAGENT_EXTENSION_KEY)
-                .and_then(|b| {
-                    b.downcast_ref::<Arc<nekocode_subagent::SubagentRegistry>>()
-                        .cloned()
-                })
+            agent.extensions.get::<nekocode_subagent::SubagentRegistry>()
         } else {
             None
         };
