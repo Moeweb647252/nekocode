@@ -7,12 +7,11 @@
 
 use std::sync::Arc;
 
-use dashmap::DashMap;
+use nekocode_core::extensions::Extensions;
 use nekocode_entities::{middleware::Middleware, prepare_db, thread::Thread};
 use nekocode_subthread::{
     SubthreadConfig, SubthreadMiddleware,
     controller::{ActivationOutcome, ThreadController},
-    middleware::SUBTHREAD_EXTENSION_KEY,
 };
 
 /// A no-op controller used only to satisfy the middleware constructor in tests
@@ -54,7 +53,7 @@ impl ThreadController for NoopController {
                 db: self.db.clone(),
                 middlewares: std::sync::Arc::new(Vec::new()),
                 provider: std::sync::Arc::new(UnusedProvider),
-                extensions: std::sync::Arc::new(dashmap::DashMap::new()),
+                extensions: Extensions::new(),
             },
         )))
     }
@@ -156,8 +155,7 @@ async fn build_tools(
     nekocode_types::tool::ToolRegistry,
     Arc<nekocode_subthread::SubthreadRegistry>,
 ) {
-    let extensions: Arc<DashMap<String, Box<dyn std::any::Any + Send + Sync>>> =
-        Arc::new(DashMap::new());
+    let extensions = Extensions::new();
     let mw = SubthreadMiddleware::new(
         extensions.clone(),
         db.clone(),
@@ -176,11 +174,7 @@ async fn build_tools(
     .expect("before_generate");
     // Pull the per-parent registry back out of extensions.
     let registry = extensions
-        .get(SUBTHREAD_EXTENSION_KEY)
-        .and_then(|b| {
-            b.downcast_ref::<Arc<nekocode_subthread::SubthreadRegistry>>()
-                .cloned()
-        })
+        .get::<nekocode_subthread::SubthreadRegistry>()
         .expect("subthread registry published to extensions");
     (reg, registry)
 }
