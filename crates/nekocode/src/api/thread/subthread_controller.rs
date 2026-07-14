@@ -60,7 +60,7 @@ impl ThreadController for ApiThreadController {
             subthread_controller: Arc::new(self.clone()),
             provider: provider.clone(),
         };
-        let middlewares = build_middlewares(&ctx, &thread.middlewares.get()).await;
+        let middlewares = build_middlewares(&ctx, thread.middlewares.get()).await;
 
         match self.active_threads.entry(subthread_id) {
             Occupied(entry) => {

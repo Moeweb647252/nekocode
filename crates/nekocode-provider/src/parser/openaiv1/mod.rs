@@ -92,16 +92,16 @@ impl OpenAIV1Stream {
         for choice in &chunk.choices {
             let delta = &choice.delta;
 
-            if let Some(content) = &delta.content {
-                if !content.is_empty() {
-                    return Some(ProviderEvent::Content(content.clone()));
-                }
+            if let Some(content) = &delta.content
+                && !content.is_empty()
+            {
+                return Some(ProviderEvent::Content(content.clone()));
             }
 
-            if let Some(reasoning) = &delta.reasoning_content {
-                if !reasoning.is_empty() {
-                    return Some(ProviderEvent::ReasoningContent(reasoning.clone()));
-                }
+            if let Some(reasoning) = &delta.reasoning_content
+                && !reasoning.is_empty()
+            {
+                return Some(ProviderEvent::ReasoningContent(reasoning.clone()));
             }
 
             if let Some(tool_calls) = &delta.tool_calls {

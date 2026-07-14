@@ -72,12 +72,12 @@ pub fn parse_skill_md(content: &str, expected_name: Option<&str>) -> anyhow::Res
         .name
         .ok_or_else(|| anyhow::anyhow!("SKILL.md frontmatter missing required field: name"))?;
     validate_name(&name)?;
-    if let Some(expected) = expected_name {
-        if name != expected {
-            anyhow::bail!(
-                "SKILL.md `name` ({name}) must match parent directory name ({expected})"
-            );
-        }
+    if let Some(expected) = expected_name
+        && name != expected
+    {
+        anyhow::bail!(
+            "SKILL.md `name` ({name}) must match parent directory name ({expected})"
+        );
     }
 
     let description = fm

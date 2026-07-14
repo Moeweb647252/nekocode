@@ -122,10 +122,10 @@ impl AnthropicStream {
                 if let Some(reason) = d.delta.stop_reason {
                     self.stop_reason = Some(reason);
                 }
-                if let Some(usage) = d.usage {
-                    if let Some(self_usage) = self.usage.as_mut() {
-                        self_usage.output_tokens = usage.output_tokens;
-                    }
+                if let Some(usage) = d.usage
+                    && let Some(self_usage) = self.usage.as_mut()
+                {
+                    self_usage.output_tokens = usage.output_tokens;
                 }
                 None
             }

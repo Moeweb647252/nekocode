@@ -102,7 +102,6 @@ impl DeepSeek {
         let mut stream = OpenAIV1Stream::new(sse);
         let mut acc = ResponseAccumulator::new();
         while let Some(event) = stream.next_event().await.map_err(|e| ProviderError::HttpError(e.to_string()))? {
-            let event = event; // re-bind as immutable
             sender.send(event.clone()).ok();
             acc.ingest(&event);
         }
@@ -190,7 +189,7 @@ impl DeepSeek {
         let content: Vec<MessageParam> = request
             .messages
             .iter()
-            .map(|msg| to_anthropic_message(msg))
+            .map(to_anthropic_message)
             .collect();
 
         let tools = build_anthropic_tools(request.tool_specs());

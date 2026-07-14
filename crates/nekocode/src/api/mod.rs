@@ -47,7 +47,7 @@ impl ApiResponse {
     pub fn ok<T: Serialize>(data: T) -> Result<Self, ApiError> {
         Ok(Self {
             code: "ok".to_string(),
-            data: serde_json::to_value(data).map_err(|e| ApiError::SerializationError(e))?,
+            data: serde_json::to_value(data).map_err(ApiError::SerializationError)?,
             msg: None,
         })
     }
@@ -74,7 +74,7 @@ pub(crate) async fn auth_middleware_inner(
         .get("Token")
         .ok_or(ApiError::Unauthorized)?
         .to_str()
-        .map_err(|e| anyhow::Error::from(e))?;
+        .map_err(anyhow::Error::from)?;
     if let Some(token) = toasty::query!(Token FILTER .token == #token)
         .first()
         .exec(&mut state.db)

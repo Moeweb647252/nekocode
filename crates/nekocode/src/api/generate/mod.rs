@@ -48,11 +48,8 @@ pub(super) async fn send_stop(
     else {
         return;
     };
-    // `String → ws::Message` via `TryInto` always succeeds (Text variant),
-    // but use ok() to avoid an irrefutable let...else pattern warning.
-    let Some(payload) = payload.try_into().ok() else {
-        return;
-    };
+    // `String → ws::Message` is infallible (Text variant).
+    let payload: axum::extract::ws::Message = payload.into();
     let _ = socket.send(payload).await;
 }
 

@@ -58,7 +58,6 @@ impl McpConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn default_round_trip() {

@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -37,7 +35,7 @@ impl Default for SkillsDirectoryConfig {
 fn default_skills_directory() -> String {
     dirs::config_dir()
         .map(|p| p.join("nekocode"))
-        .unwrap_or(PathBuf::new())
+        .unwrap_or_default()
         .join("skills")
         .display()
         .to_string()
@@ -78,19 +76,14 @@ pub enum DeepSeekEndpoint {
     OpenAI,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AuthenticationConfig {
     #[serde(rename = "password")]
     Password { password: String },
     #[serde(rename = "none")]
+    #[default]
     None,
-}
-
-impl Default for AuthenticationConfig {
-    fn default() -> Self {
-        AuthenticationConfig::None
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

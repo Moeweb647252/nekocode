@@ -52,7 +52,7 @@ pub async fn handle_websocket(
         if i == watermark {
             watermark = i + 1;
             ws.send(ws::Message::Text(
-                serde_json::to_string(&WebSocketEvent::Delta(delta.clone()))?.try_into()?,
+                serde_json::to_string(&WebSocketEvent::Delta(delta.clone()))?.into(),
             ))
             .await?;
         } else if i > watermark {
@@ -60,7 +60,7 @@ pub async fn handle_websocket(
             // push indices, but guard regardless); advance to cover the gap.
             watermark = i + 1;
             ws.send(ws::Message::Text(
-                serde_json::to_string(&WebSocketEvent::Delta(delta.clone()))?.try_into()?,
+                serde_json::to_string(&WebSocketEvent::Delta(delta.clone()))?.into(),
             ))
             .await?;
         }
@@ -81,7 +81,7 @@ pub async fn handle_websocket(
                         // (after a lag) stay in sync with what we've sent.
                         watermark = watermark.max(event.index + 1);
                         ws.send(ws::Message::Text(
-                            serde_json::to_string(&WebSocketEvent::Delta(event))?.try_into()?,
+                            serde_json::to_string(&WebSocketEvent::Delta(event))?.into(),
                         ))
                         .await?;
                     }
@@ -100,7 +100,7 @@ pub async fn handle_websocket(
                             }
                             watermark = i + 1;
                             ws.send(ws::Message::Text(
-                                serde_json::to_string(&WebSocketEvent::Delta(delta.clone()))?.try_into()?,
+                                serde_json::to_string(&WebSocketEvent::Delta(delta.clone()))?.into(),
                             ))
                             .await?;
                         }

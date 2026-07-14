@@ -86,7 +86,7 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
             let _ = broadcast_tx.send(event.clone());
             socket
                 .send(ws::Message::Text(
-                    serde_json::to_string(&WebSocketEvent::Delta(event))?.try_into()?,
+                    serde_json::to_string(&WebSocketEvent::Delta(event))?.into(),
                 ))
                 .await?;
         }

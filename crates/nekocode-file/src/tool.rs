@@ -264,7 +264,7 @@ fn parse_path(params: &serde_json::Value, config: &FileConfig) -> Result<std::pa
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| ToolError::InvalidParameters("Missing 'path' parameter".into()))?;
-    config.resolve_and_check(raw).map_err(|e| ToolError::InvalidParameters(e))
+    config.resolve_and_check(raw).map_err(ToolError::InvalidParameters)
 }
 
 fn parse_optional_u64(params: &serde_json::Value, key: &str) -> Option<u64> {

@@ -280,7 +280,7 @@ async fn extract_last_event_data(resp: reqwest::Response) -> Result<Value> {
         }
     }
     let data = last_data.context("MCP HTTP SSE stream had no data event")?;
-    Ok(serde_json::from_str(&data).context("MCP HTTP SSE: bad JSON in data event")?)
+    serde_json::from_str(&data).context("MCP HTTP SSE: bad JSON in data event")
 }
 
 /// Unified MCP client abstracting over stdio and Streamable HTTP transports.

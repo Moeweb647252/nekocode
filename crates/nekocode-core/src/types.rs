@@ -34,11 +34,8 @@ impl GenerateResponse {
     /// Handle an incremental stream event. Tool-call results are appended
     /// directly to the message list so middleware can inspect them.
     pub fn merge_stream_event(&mut self, event: StreamEvent) {
-        match event.data {
-            StreamEventData::ToolCallResult(result) => {
-                self.message.push(MessageType::ToolCallResult(result));
-            }
-            _ => {}
+        if let StreamEventData::ToolCallResult(result) = event.data {
+            self.message.push(MessageType::ToolCallResult(result));
         }
     }
 }

@@ -27,7 +27,7 @@ async fn main() {
     } else {
         dirs::config_dir()
             .map(|p| p.join("nekocode"))
-            .unwrap_or(PathBuf::new())
+            .unwrap_or_default()
     };
     let config_file_path = config_path.join("config.toml");
     let config_content = std::fs::read_to_string(&config_file_path).unwrap_or_else(|_| {

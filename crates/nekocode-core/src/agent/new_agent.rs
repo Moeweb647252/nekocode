@@ -110,7 +110,7 @@ impl Agent {
                     // Forward provider stream events to the client, skipping
                     // the provider's MessageStart (the agent emits its own
                     // above) so the client doesn't see two per generation.
-                    while let Some(event) = (&mut rx).recv().await {
+                    while let Some(event) = rx.recv().await {
                         if matches!(event, ProviderEvent::MessageStart) {
                             continue;
                         }
@@ -134,39 +134,36 @@ impl Agent {
                     });
                     let mut this_generation_had_tool_calls = false;
                     for block in response.message.blocks.iter() {
-                        match block {
-                            nekocode_types::generate::AssistantContentBlock::ToolCall(tool_call) => {
-                                this_generation_had_tool_calls = true;
-                                let tool_call_result = match tool_registry.get(&tool_call.name) {
-                                    Some(tool) => ToolCallResult {
-                                        id: tool_call.id.clone(),
-                                        result: ToolCallResultInner::from(
-                                            tool.call(tool_call.args.clone()).await,
-                                        ),
+                        if let nekocode_types::generate::AssistantContentBlock::ToolCall(tool_call) = block {
+                            this_generation_had_tool_calls = true;
+                            let tool_call_result = match tool_registry.get(&tool_call.name) {
+                                Some(tool) => ToolCallResult {
+                                    id: tool_call.id.clone(),
+                                    result: ToolCallResultInner::from(
+                                        tool.call(tool_call.args.clone()).await,
+                                    ),
+                                },
+                                None => ToolCallResult {
+                                    id: tool_call.id.clone(),
+                                    result: ToolCallResultInner::Error {
+                                        error: "Tool not found".into(),
                                     },
-                                    None => ToolCallResult {
-                                        id: tool_call.id.clone(),
-                                        result: ToolCallResultInner::Error {
-                                            error: "Tool not found".into(),
-                                        },
-                                    },
-                                };
-                                current_messages.push(Message {
-                                    created_at: jiff::Timestamp::now(),
-                                    data: MessageType::ToolCallResult(tool_call_result.clone()),
-                                    usage: None,
-                                });
-                                let stream_event = StreamEvent {
-                                    data: StreamEventData::ToolCallResult(tool_call_result),
-                                    created_at: jiff::Timestamp::now(),
-                                };
-                                Self::send(
-                                    &sink,
-                                    stream_event.data.clone(),
-                                )?;
-                                generate_response.merge_stream_event(stream_event);
-                            }
-                            _ => {}
+                                },
+                            };
+                            current_messages.push(Message {
+                                created_at: jiff::Timestamp::now(),
+                                data: MessageType::ToolCallResult(tool_call_result.clone()),
+                                usage: None,
+                            });
+                            let stream_event = StreamEvent {
+                                data: StreamEventData::ToolCallResult(tool_call_result),
+                                created_at: jiff::Timestamp::now(),
+                            };
+                            Self::send(
+                                &sink,
+                                stream_event.data.clone(),
+                            )?;
+                            generate_response.merge_stream_event(stream_event);
                         }
                     }
                     generate_response.merge(response);

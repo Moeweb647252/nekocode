@@ -15,6 +15,7 @@ use crate::registry::{SubagentRegistry, SubagentRunResult};
 ///   `on_turn_end` cancels it once and every descendant `run_subagent`
 ///   observes it concurrently — this is what makes cross-depth cascade
 ///   reliable instead of best-effort.
+///
 /// On either cancellation the child's own middlewares' `on_turn_end` is driven
 /// explicitly (the dropped `run` future wouldn't run run_loop's end-of-turn
 /// dispatch), so the child's own spawned descendants get cascade-aborted.

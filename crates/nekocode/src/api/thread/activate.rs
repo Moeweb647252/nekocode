@@ -64,7 +64,7 @@ pub async fn activate_thread(
         subthread_controller,
         provider: provider.clone(),
     };
-    let middlewares = build_middlewares(&ctx, &thread.middlewares.get()).await;
+    let middlewares = build_middlewares(&ctx, thread.middlewares.get()).await;
 
     // Single atomic check-and-insert via the dashmap entry API. The redundant
     // pre-check that used to live here raced with concurrent activations and
