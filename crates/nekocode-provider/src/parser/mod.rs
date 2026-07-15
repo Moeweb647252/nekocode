@@ -1,2 +1,2 @@
-pub mod anthropic;
-pub mod openaiv1;
+pub(crate) mod anthropic;
+pub(crate) mod openaiv1;

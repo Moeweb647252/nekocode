@@ -1,39 +1,44 @@
+// Variant names mirror OpenAI's wire-format type names verbatim
+// (e.g. `ChatCompletion*` messages); renaming to satisfy clippy would
+// diverge from the API surface we serialize against.
+#![allow(clippy::enum_variant_names)]
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionRequest {
-    pub model: String,
-    pub messages: Vec<ChatCompletionMessageParam>,
+pub(crate) struct ChatCompletionRequest {
+    pub(crate) model: String,
+    pub(crate) messages: Vec<ChatCompletionMessageParam>,
     #[serde(default)]
-    pub stream: bool,
+    pub(crate) stream: bool,
     #[serde(default)]
-    pub temperature: Option<f32>,
+    pub(crate) temperature: Option<f32>,
     #[serde(default)]
-    pub top_p: Option<f32>,
+    pub(crate) top_p: Option<f32>,
     #[serde(default)]
-    pub max_tokens: Option<usize>,
+    pub(crate) max_tokens: Option<usize>,
     #[serde(default)]
-    pub stop: Option<Vec<String>>,
+    pub(crate) stop: Option<Vec<String>>,
     #[serde(default)]
-    pub tools: Option<Vec<ChatCompletionTool>>,
+    pub(crate) tools: Option<Vec<ChatCompletionTool>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionTool {
+pub(crate) struct ChatCompletionTool {
     #[serde(rename = "type")]
-    pub tool_type: String,
-    pub function: ChatCompletionToolFunction,
+    pub(crate) tool_type: String,
+    pub(crate) function: ChatCompletionToolFunction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionToolFunction {
-    pub name: String,
-    pub description: String,
-    pub parameters: serde_json::Value,
+pub(crate) struct ChatCompletionToolFunction {
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) parameters: serde_json::Value,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "role")]
-pub enum ChatCompletionMessageParam {
+pub(crate) enum ChatCompletionMessageParam {
     #[serde(rename = "developer")]
     ChatCompletionDeveloperMessageParam(ChatCompletionDeveloperMessageParam),
     #[serde(rename = "system")]
@@ -46,66 +51,66 @@ pub enum ChatCompletionMessageParam {
     ChatCompletionToolMessageParam(ChatCompletionToolMessageParam),
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionDeveloperMessageParam {
-    pub content: String,
-    pub name: Option<String>,
+pub(crate) struct ChatCompletionDeveloperMessageParam {
+    pub(crate) content: String,
+    pub(crate) name: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionSystemMessageParam {
-    pub content: String,
-    pub name: Option<String>,
+pub(crate) struct ChatCompletionSystemMessageParam {
+    pub(crate) content: String,
+    pub(crate) name: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionUserMessageParam {
-    pub content: String,
-    pub name: Option<String>,
+pub(crate) struct ChatCompletionUserMessageParam {
+    pub(crate) content: String,
+    pub(crate) name: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionAssistantMessageParam {
-    pub content: String,
-    pub name: Option<String>,
-    pub refusal: Option<String>,
-    pub tool_calls: Option<Vec<ChatCompletionMessageToolCall>>,
-    pub prefix: Option<bool>,
-    pub reasoning_content: Option<String>,
+pub(crate) struct ChatCompletionAssistantMessageParam {
+    pub(crate) content: String,
+    pub(crate) name: Option<String>,
+    pub(crate) refusal: Option<String>,
+    pub(crate) tool_calls: Option<Vec<ChatCompletionMessageToolCall>>,
+    pub(crate) prefix: Option<bool>,
+    pub(crate) reasoning_content: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum ChatCompletionMessageToolCall {
+pub(crate) enum ChatCompletionMessageToolCall {
     #[serde(rename = "function")]
     ChatCompletionMessageFunctionToolCall(ChatCompletionMessageFunctionToolCall),
     #[serde(rename = "custom")]
     ChatCompletionMessageCustomToolCall(ChatCompletionMessageCustomToolCall),
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionMessageFunctionToolCall {
-    pub id: String,
-    pub function: Function,
+pub(crate) struct ChatCompletionMessageFunctionToolCall {
+    pub(crate) id: String,
+    pub(crate) function: Function,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Function {
-    pub arguments: String,
-    pub name: String,
+pub(crate) struct Function {
+    pub(crate) arguments: String,
+    pub(crate) name: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionMessageCustomToolCall {
-    pub id: String,
-    pub custom: Custom,
+pub(crate) struct ChatCompletionMessageCustomToolCall {
+    pub(crate) id: String,
+    pub(crate) custom: Custom,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Custom {
-    pub input: String,
-    pub name: String,
+pub(crate) struct Custom {
+    pub(crate) input: String,
+    pub(crate) name: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionToolMessageParam {
-    pub content: String,
-    pub tool_call_id: String,
+pub(crate) struct ChatCompletionToolMessageParam {
+    pub(crate) content: String,
+    pub(crate) tool_call_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Role {
+pub(crate) enum Role {
     System,
     User,
     Assistant,
@@ -116,61 +121,61 @@ pub enum Role {
 // ── Streaming response types ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionStreamResponse {
-    pub id: String,
-    pub object: ChatCompletionObject,
-    pub created: u64,
-    pub model: String,
-    pub choices: Vec<ChatCompletionStreamChoice>,
+pub(crate) struct ChatCompletionStreamResponse {
+    pub(crate) id: String,
+    pub(crate) object: ChatCompletionObject,
+    pub(crate) created: u64,
+    pub(crate) model: String,
+    pub(crate) choices: Vec<ChatCompletionStreamChoice>,
     #[serde(default)]
-    pub usage: Option<ChatCompletionStreamUsage>,
+    pub(crate) usage: Option<ChatCompletionStreamUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ChatCompletionObject {
+pub(crate) enum ChatCompletionObject {
     #[serde(rename = "chat.completion.chunk")]
     ChatCompletionChunk,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionStreamChoice {
-    pub index: usize,
-    pub delta: ChatCompletionStreamDelta,
-    pub finish_reason: Option<FinishReason>,
+pub(crate) struct ChatCompletionStreamChoice {
+    pub(crate) index: usize,
+    pub(crate) delta: ChatCompletionStreamDelta,
+    pub(crate) finish_reason: Option<FinishReason>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionStreamDelta {
+pub(crate) struct ChatCompletionStreamDelta {
     #[serde(default)]
-    pub role: Option<Role>,
+    pub(crate) role: Option<Role>,
     #[serde(default)]
-    pub content: Option<String>,
+    pub(crate) content: Option<String>,
     #[serde(default)]
-    pub tool_calls: Option<Vec<ChatCompletionStreamDeltaToolCall>>,
+    pub(crate) tool_calls: Option<Vec<ChatCompletionStreamDeltaToolCall>>,
     #[serde(default)]
-    pub reasoning_content: Option<String>,
+    pub(crate) reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionStreamDeltaToolCall {
-    pub index: usize,
+pub(crate) struct ChatCompletionStreamDeltaToolCall {
+    pub(crate) index: usize,
     #[serde(default)]
-    pub id: Option<String>,
+    pub(crate) id: Option<String>,
     #[serde(default)]
-    pub function: Option<ChatCompletionStreamFunction>,
+    pub(crate) function: Option<ChatCompletionStreamFunction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionStreamFunction {
+pub(crate) struct ChatCompletionStreamFunction {
     #[serde(default)]
-    pub name: Option<String>,
+    pub(crate) name: Option<String>,
     #[serde(default)]
-    pub arguments: Option<String>,
+    pub(crate) arguments: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum FinishReason {
+pub(crate) enum FinishReason {
     Stop,
     Length,
     ToolCalls,
@@ -179,8 +184,8 @@ pub enum FinishReason {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatCompletionStreamUsage {
-    pub prompt_tokens: usize,
-    pub completion_tokens: usize,
-    pub total_tokens: usize,
+pub(crate) struct ChatCompletionStreamUsage {
+    pub(crate) prompt_tokens: usize,
+    pub(crate) completion_tokens: usize,
+    pub(crate) total_tokens: usize,
 }

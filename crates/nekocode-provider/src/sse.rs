@@ -9,8 +9,9 @@ use tokio::io::AsyncBufReadExt;
 use tokio_stream::{Stream, StreamExt};
 use tokio_util::io::StreamReader;
 
+/// Errors that can occur while establishing an SSE connection.
 #[derive(Debug, thiserror::Error)]
-pub enum EventSourceError {
+pub(crate) enum EventSourceError {
     #[error("Unexpected response status: {0}")]
     BadStatus(StatusCode),
     #[error("Missing or invalid Content-Type header: {0:?}")]
@@ -19,16 +20,20 @@ pub enum EventSourceError {
     EventError(#[from] EventError),
 }
 
+/// Errors that can occur while reading an event stream that was already
+/// established.
 #[derive(Debug, thiserror::Error)]
-pub enum EventError {
+pub(crate) enum EventError {
     #[error("I/O error while reading event stream: {0}")]
     IoError(#[from] std::io::Error),
 }
 
 /// Represents a stream of Server-Sent Events.
-pub type ServerSentEvents = Pin<Box<dyn Stream<Item = Result<Event, EventSourceError>> + Send>>;
+pub(crate) type ServerSentEvents = Pin<Box<dyn Stream<Item = Result<Event, EventSourceError>> + Send>>;
 
-pub static MIME_EVENT_STREAM: &[u8] = b"text/event-stream";
+/// The `text/event-stream` MIME type bytes, used to verify a response carries
+/// an SSE payload.
+pub(crate) static MIME_EVENT_STREAM: &[u8] = b"text/event-stream";
 
 /// Returns `true` if the given [`HeaderValue`] is an event stream MIME type.
 fn is_event_stream(value: &HeaderValue) -> bool {
@@ -113,19 +118,19 @@ fn parse_line(line: &str) -> (&str, &str) {
 
 /// Server-Sent Event representation.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Event {
+pub(crate) struct Event {
     /// A string identifying the type of event described.
-    pub event_type: String,
+    pub(crate) event_type: String,
     /// The data field for the message.
-    pub data: String,
+    pub(crate) data: String,
     /// Last event ID value.
-    pub last_event_id: Option<String>,
+    pub(crate) last_event_id: Option<String>,
     /// Reconnection time.
-    pub retry: Option<Duration>,
+    pub(crate) retry: Option<Duration>,
 }
 
 /// A trait for consuming a [`Response`] as a [`Stream`] of Server-Sent [`Event`]s (SSE).
-pub trait EventSource {
+pub(crate) trait EventSource {
     /// Converts the [`Response`] into a stream of Server-Sent Events.
     /// Returns it as a fallible [`Stream`] of [`Event`]s.
     ///

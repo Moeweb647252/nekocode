@@ -33,13 +33,21 @@ use crate::{
     sse::EventSource,
 };
 
-pub struct DeepSeek {
+/// DeepSeek LLM backend.
+///
+/// Despite the name, `DeepSeek` is the workspace's concrete [`Provider`]
+/// implementation and dispatches to either the Anthropic or OpenAI-compatible
+/// wire format depending on the configured [`DeepSeekEndpoint`]. All request
+/// shaping and stream parsing is delegated to the [`parser`](crate::parser)
+/// modules.
+pub(crate) struct DeepSeek {
     client: reqwest::Client,
     config: DeepSeekConfig,
 }
 
 impl DeepSeek {
-    pub fn from_config(config: DeepSeekConfig) -> Self {
+    /// Construct a backend from a [`DeepSeekConfig`].
+    pub(crate) fn from_config(config: DeepSeekConfig) -> Self {
         DeepSeek {
             client: reqwest::Client::new(),
             config,

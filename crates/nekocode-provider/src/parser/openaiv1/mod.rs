@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::anyhow;
 use futures_util::StreamExt;
 
-pub mod types;
+pub(crate) mod types;
 
 use crate::sse::ServerSentEvents;
 use nekocode_core::provider::{ProviderError, ProviderEvent};
@@ -20,7 +20,7 @@ struct PendingOpenAIToolCall {
     arguments: String,
 }
 
-pub struct OpenAIV1Stream {
+pub(crate) struct OpenAIV1Stream {
     stream: ServerSentEvents,
     pending_tool_calls: HashMap<usize, PendingOpenAIToolCall>,
     usage: Option<ChatCompletionStreamUsage>,
@@ -36,7 +36,7 @@ pub struct OpenAIV1Stream {
 }
 
 impl OpenAIV1Stream {
-    pub fn new(stream: ServerSentEvents) -> Self {
+    pub(crate) fn new(stream: ServerSentEvents) -> Self {
         Self {
             stream,
             pending_tool_calls: HashMap::new(),
@@ -47,7 +47,7 @@ impl OpenAIV1Stream {
     }
 
     /// Consume the accumulated usage stats from the stream, if any.
-    pub fn take_usage(&mut self) -> Option<Usage> {
+    pub(crate) fn take_usage(&mut self) -> Option<Usage> {
         self.usage.take().map(|u| Usage {
             total_input: u.prompt_tokens,
             total_output: u.completion_tokens,
@@ -56,7 +56,7 @@ impl OpenAIV1Stream {
         })
     }
 
-    pub async fn next_event(&mut self) -> Result<Option<ProviderEvent>, ProviderError> {
+    pub(crate) async fn next_event(&mut self) -> Result<Option<ProviderEvent>, ProviderError> {
         // First drain any events we buffered (e.g. multiple flushed tool calls).
         if let Some(event) = self.pending_events.pop() {
             return Ok(Some(event));

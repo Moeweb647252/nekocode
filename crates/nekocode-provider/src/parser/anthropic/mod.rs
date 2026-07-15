@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use futures_util::StreamExt;
 use nekocode_types::{generate::StopReason, tool::ToolCall};
 
-pub mod types;
+pub(crate) mod types;
 
 use crate::sse::ServerSentEvents;
 use nekocode_core::provider::{ProviderError, ProviderEvent};
@@ -17,7 +17,7 @@ struct PendingToolCall {
     json_fragment: String,
 }
 
-pub struct AnthropicStream {
+pub(crate) struct AnthropicStream {
     stream: ServerSentEvents,
     pending_tool_calls: HashMap<usize, PendingToolCall>,
     usage: Option<Usage>,
@@ -27,7 +27,7 @@ pub struct AnthropicStream {
 }
 
 impl AnthropicStream {
-    pub fn new(stream: ServerSentEvents) -> Self {
+    pub(crate) fn new(stream: ServerSentEvents) -> Self {
         Self {
             stream,
             pending_tool_calls: HashMap::new(),
@@ -37,7 +37,7 @@ impl AnthropicStream {
     }
 
     /// Consume the accumulated usage stats from the stream, if any.
-    pub fn take_usage(&mut self) -> Option<CoreUsage> {
+    pub(crate) fn take_usage(&mut self) -> Option<CoreUsage> {
         self.usage.take().map(|u| CoreUsage {
             total_input: u.input_tokens,
             total_output: u.output_tokens,
@@ -46,7 +46,7 @@ impl AnthropicStream {
         })
     }
 
-    pub async fn next_event(&mut self) -> Result<Option<ProviderEvent>, ProviderError> {
+    pub(crate) async fn next_event(&mut self) -> Result<Option<ProviderEvent>, ProviderError> {
         while let Some(event) = self.stream.next().await {
             let event = event.map_err(|e| anyhow!("Error reading event: {}", e))?;
             match event.event_type.as_str() {
