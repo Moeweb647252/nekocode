@@ -14,6 +14,9 @@ use crate::middleware::Middleware;
 
 pub use sink::AgentEventSink;
 
+/// One indexed event on the agent's output stream (sent over the WebSocket to
+/// the client). `index` is a monotonic per-run sequence so watchers can detect
+/// gaps and replay from a durable buffer.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentEvent {
@@ -21,6 +24,10 @@ pub struct AgentEvent {
     pub data: AgentEventType,
 }
 
+/// Tagged union of agent stream events. `StreamEvent` carries the run's own
+/// generation/tool events; `MiddlewareEvent` carries events relayed out of a
+/// child generation by a middleware (subagent today), kept opaque so this enum
+/// never needs to know each source's internal event shape.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "type")]
@@ -34,6 +41,9 @@ pub enum AgentEventType {
     MiddlewareEvent(MiddlewareEvent),
 }
 
+/// A middleware-relayed event. `source`/`source_id` identify the child run;
+/// `event_type` is the source-published tag (e.g. `"agentEvent"`) and `data`
+/// is the opaque payload (e.g. the serialized child `AgentEvent`).
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MiddlewareEvent {
@@ -47,6 +57,10 @@ pub struct MiddlewareEvent {
     pub data: serde_json::Value,
 }
 
+/// Per-thread orchestrator: holds the configured middleware pipeline, the
+/// [`Provider`](crate::provider::Provider), the DB handle, and a type-keyed
+/// [`Extensions`] map for per-thread state (registries, controllers). The
+/// run loop (`run_loop`) lives in `new_agent`.
 #[derive(Clone)]
 pub struct Agent {
     pub thread_id: u64,

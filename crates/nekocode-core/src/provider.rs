@@ -6,6 +6,8 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::types::GenerateRequest;
 
+/// Errors a [`Provider`] can surface: HTTP/transport failures, deserialization
+/// failures, or any backend-specific error wrapped in `Other`.
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
     #[error("HTTP error: {0}")]
@@ -16,6 +18,11 @@ pub enum ProviderError {
     Other(#[from] anyhow::Error),
 }
 
+/// The LLM backend abstraction. A provider streams a single generation's
+/// events through `sender` as they arrive (so the client can render live),
+/// then returns the finalized [`ProviderResponse`] (assistant message + usage).
+/// Implementations live in `nekocode-provider`; the agent only talks to this
+/// trait.
 #[async_trait::async_trait]
 pub trait Provider: Send + Sync {
     async fn stream_generate(
@@ -25,11 +32,17 @@ pub trait Provider: Send + Sync {
     ) -> Result<ProviderResponse, ProviderError>;
 }
 
+/// The finalized result of one provider generation: the assistant's message
+/// and its token usage.
 pub struct ProviderResponse {
     pub message: AssistantMessage,
     pub usage: Usage,
 }
 
+/// Incremental events yielded by [`Provider::stream_generate`] during a single
+/// generation. `MessageStart`/`MessageEnd` bracket the stream; `Content` /
+/// `ReasoningContent` carry text deltas; `ToolCall` carries a parsed tool
+/// request. Converted to a [`generate::StreamEvent`] by the agent run loop.
 #[derive(Clone)]
 pub enum ProviderEvent {
     MessageStart,

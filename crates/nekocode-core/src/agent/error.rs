@@ -1,3 +1,6 @@
+/// Errors the agent run loop can surface: missing items, DB failures
+/// (from Toasty), provider failures, and `Other` for anything else wrapped
+/// in anyhow.
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     #[error("Item not found: {0}")]

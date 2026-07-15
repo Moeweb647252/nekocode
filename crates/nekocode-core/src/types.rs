@@ -2,6 +2,9 @@ use nekocode_types::generate::{MessageType, StreamEvent, StreamEventData};
 
 use crate::provider::ProviderResponse;
 
+/// A single provider generation request: the conversation so far, an optional
+/// system prompt, and the tool specs the model may call. Built by the agent
+/// run loop from the thread's persisted messages + the registry.
 #[derive(Debug, Clone, Default)]
 pub struct GenerateRequest {
     pub messages: Vec<MessageType>,
@@ -15,6 +18,9 @@ impl GenerateRequest {
     }
 }
 
+/// The accumulated assistant messages from a run, merged from provider
+/// responses and tool-call-result stream events. Used by middleware in
+/// `after_generate` to inspect what was produced.
 #[derive(Debug, Clone, Default)]
 pub struct GenerateResponse {
     pub message: Vec<MessageType>,
@@ -26,7 +32,7 @@ impl GenerateResponse {
     }
 
     /// Merge a completed provider response by converting its assistant
-    /// message into a [`Message`] and appending it.
+    /// message into a [`MessageType`] and appending it.
     pub fn merge(&mut self, response: ProviderResponse) {
         self.message.push(MessageType::Assistant(response.message));
     }

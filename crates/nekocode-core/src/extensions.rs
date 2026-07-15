@@ -15,6 +15,10 @@
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 
+/// Type-keyed extension map shared across an agent's middleware pipeline.
+///
+/// See the module docs for the `Arc<T>` storage convention: each value is
+/// stored as an `Arc<T>` and read back by `TypeId::of::<Arc<T>>()`.
 #[derive(Clone, Default)]
 pub struct Extensions(Arc<dashmap::DashMap<TypeId, Box<dyn Any + Send + Sync>>>);
 
