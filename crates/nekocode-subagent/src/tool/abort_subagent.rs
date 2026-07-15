@@ -3,11 +3,15 @@ use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 use crate::tool::parse_agent_id;
 use crate::SubagentContext;
 
+/// The `abort_subagent` tool: fires the subagent's per-agent cancellation
+/// token, aborts its background task if still running, and removes its entry
+/// from the registry — discarding any in-memory result.
 pub struct AbortSubagentTool {
     ctx: SubagentContext,
 }
 
 impl AbortSubagentTool {
+    /// Construct holding a clone of the shared subagent context.
     pub fn new(ctx: SubagentContext) -> Self {
         Self { ctx }
     }

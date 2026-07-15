@@ -22,6 +22,8 @@ impl SkillsConfig {
         serde_json::from_value(v.clone()).unwrap_or_default()
     }
 
+    /// Serialize back to the JSON form persisted on the `Middleware` entity
+    /// row's `config` column (camelCase keys, matching `from_value`).
     pub fn to_value(&self) -> serde_json::Value {
         serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }

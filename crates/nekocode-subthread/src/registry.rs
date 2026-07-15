@@ -43,6 +43,8 @@ pub struct SubthreadState {
 }
 
 impl SubthreadState {
+    /// Construct a fresh entry for `thread_id` in the `Idle` run state, with
+    /// no background task yet attached and its own `Notify`.
     pub fn new(thread_id: u64) -> Self {
         Self {
             thread_id,
@@ -65,6 +67,7 @@ pub struct SubthreadRegistry {
 }
 
 impl SubthreadRegistry {
+    /// Construct an empty per-parent registry.
     pub fn new() -> Self {
         Self::default()
     }

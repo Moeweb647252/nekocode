@@ -31,10 +31,14 @@ pub struct SkillLoader {
 }
 
 impl SkillLoader {
+    /// Construct a loader reading user-defined skills from `skills_dir`.
     pub fn new(skills_dir: PathBuf) -> Self {
         Self { skills_dir }
     }
 
+    /// Parse all builtin skills plus every spec-compliant subdirectory of
+    /// the configured skills dir, keyed by skill `name`. User-defined
+    /// skills override builtins with the same name.
     pub async fn load_all(&self) -> HashMap<String, Skill> {
         let mut skills = HashMap::new();
 

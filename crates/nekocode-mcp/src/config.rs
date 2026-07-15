@@ -50,6 +50,9 @@ impl McpConfig {
         serde_json::from_value(v.clone()).unwrap_or_default()
     }
 
+    /// Serialize to a JSON value for persistence in the Middleware config
+    /// cell; used when saving middleware state back to the DB, falling back
+    /// to `Null` on serialization failure.
     pub fn to_value(&self) -> serde_json::Value {
         serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }

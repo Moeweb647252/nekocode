@@ -3,11 +3,15 @@ use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 use crate::tool::{parse_agent_id, run_state_name};
 use crate::SubagentContext;
 
+/// The `inspect_subagent` tool: polls a subagent's current run state
+/// (running/finished/error) and surfaces the error message when it errored.
+/// Non-blocking companion to the `wait_*` tools.
 pub struct InspectSubagentTool {
     ctx: SubagentContext,
 }
 
 impl InspectSubagentTool {
+    /// Construct holding a clone of the shared subagent context.
     pub fn new(ctx: SubagentContext) -> Self {
         Self { ctx }
     }

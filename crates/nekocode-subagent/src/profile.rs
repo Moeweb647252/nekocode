@@ -3,6 +3,10 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+/// One `[[agents]]` entry from an `agents.toml` file: the recipe for spawning
+/// a named subagent — its system prompt, optional working-directory override,
+/// whether it may itself spawn subagents, and the list of middleware the spawn
+/// tool must select out of the parent's enabled set.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubagentProfile {
     pub name: String,
@@ -32,6 +36,8 @@ pub struct ProfileCatalog {
 }
 
 impl ProfileCatalog {
+    /// Construct a catalog with no profiles. The fallback used by the subagent
+    /// middleware when the `agents.toml` files fail to load.
     pub fn empty() -> Self {
         Self {
             profiles: HashMap::new(),
@@ -52,6 +58,8 @@ impl ProfileCatalog {
         Ok(Self { profiles })
     }
 
+    /// Look up a profile by name; `spawn_subagent` calls this to resolve its
+    /// `profile` parameter. Errors if the name is absent from the catalog.
     pub fn get(&self, name: &str) -> Result<&SubagentProfile, anyhow::Error> {
         self.profiles
             .get(name)

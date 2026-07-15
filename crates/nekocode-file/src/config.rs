@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// Typed configuration for the `tool` middleware. Deserialized from the
 /// per-thread `Middleware.config` JSON column (`{}` by default). Mirrors the
-/// shape of [`nekocode_shell::config::ShellConfig`].
+/// shape of `nekocode_shell::config::ShellConfig`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FileConfig {

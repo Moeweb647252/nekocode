@@ -21,6 +21,9 @@ pub struct McpMiddleware {
 }
 
 impl McpMiddleware {
+    /// Construct with per-server `config`; the actual connection is deferred
+    /// until the first `before_generate` call lazily connects and caches the
+    /// client.
     pub fn new(config: McpConfig) -> Self {
         Self {
             config: Arc::new(config),

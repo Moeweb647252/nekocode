@@ -20,6 +20,9 @@ pub struct ToolMiddleware {
 }
 
 impl ToolMiddleware {
+    /// Construct the middleware for a thread: wrap the config in an `Arc` for
+    /// the shared file tools, and carry a cloned `toasty::Db` plus the owning
+    /// thread id for `set_title`.
     pub fn new(config: config::FileConfig, db: toasty::Db, thread_id: u64) -> Self {
         Self {
             config: Arc::new(config),

@@ -4,11 +4,15 @@ use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 use crate::tool::parse_agent_id;
 use crate::SubagentContext;
 
+/// The `read_subagent` tool: returns a finished subagent's captured result —
+/// by default only the last assistant text, or the full message list when
+/// `text_only=false`. Refuses until the subagent reaches a terminal state.
 pub struct ReadSubagentTool {
     ctx: SubagentContext,
 }
 
 impl ReadSubagentTool {
+    /// Construct holding a clone of the shared subagent context.
     pub fn new(ctx: SubagentContext) -> Self {
         Self { ctx }
     }

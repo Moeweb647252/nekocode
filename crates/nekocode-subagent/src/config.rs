@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-/// Per-parent middleware config for the subagent middleware. Stored as a
-/// `Middleware` row's `config` JSON in the parent thread's DB row.
+/// Per-parent configuration carried by the subagent middleware. Stored as the
+/// `config` JSON column of the parent thread's `Middleware` DB row and
+/// deserialized at activation; its `max_depth` is propagated unchanged down the
+/// whole spawn tree as the single nesting-depth bound.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SubagentConfig {

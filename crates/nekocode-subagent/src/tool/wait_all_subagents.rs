@@ -5,11 +5,16 @@ use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 use crate::tool::{notify_any, parse_timeout, run_state_name};
 use crate::SubagentContext;
 
+/// The `wait_all_subagents` tool: blocks until every listed subagent (or, with
+/// no ids, all currently-running ones) reaches a terminal state, or until the
+/// timeout elapses — then returns the ready/pending ids split. Never kills
+/// running subagents on timeout.
 pub struct WaitAllSubagentsTool {
     ctx: SubagentContext,
 }
 
 impl WaitAllSubagentsTool {
+    /// Construct holding a clone of the shared subagent context.
     pub fn new(ctx: SubagentContext) -> Self {
         Self { ctx }
     }

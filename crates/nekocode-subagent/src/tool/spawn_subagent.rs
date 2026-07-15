@@ -10,12 +10,22 @@ use crate::middleware::SubagentMiddleware;
 use crate::runner::run_subagent;
 use crate::SubagentContext;
 
+/// The `spawn_subagent` tool: configures a single-turn child agent under a
+/// named profile (intersecting the profile's middlewares with the parent's
+/// enabled set, enforcing the nesting gates), sends it to the background via
+/// `run_subagent`, and returns immediately with status `running`. It also
+/// spawns the relay task that forwards the child's `AgentEvent`s to the parent
+/// stream as `MiddlewareEvent`s. Holds the parent's `MiddlewareEvent` sender in
+/// addition to the shared context.
 pub struct SpawnSubagentTool {
     ctx: SubagentContext,
     mev_tx: tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,
 }
 
 impl SpawnSubagentTool {
+    /// Construct with the subagent context and the parent's `MiddlewareEvent`
+    /// sender (so the relay task can forward child events onto the parent
+    /// stream).
     pub fn new(
         ctx: SubagentContext,
         mev_tx: tokio::sync::mpsc::UnboundedSender<nekocode_core::agent::MiddlewareEvent>,

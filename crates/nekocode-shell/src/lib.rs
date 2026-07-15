@@ -34,6 +34,12 @@ pub struct ShellTaskState {
     pub is_running: Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// State carrier for the shell tool middleware. Holds the shared map of
+/// running shells (also inserted into the thread's `Extensions` so the
+/// spawned-shell tools can reach it), the resolved `ShellConfig`, and the
+/// monotonic id allocator. As a `Middleware` it registers the shell tool
+/// family (`shell`, `spawn_shell`, `cancel_shell`, `send_shell_input`,
+/// `fetch_shell_output`, `wait_shell_done`) in `before_generate`.
 pub struct Shell {
     pub shell_states: Arc<dashmap::DashMap<u32, ShellTaskState>>,
     pub config: Arc<config::ShellConfig>,
@@ -41,6 +47,8 @@ pub struct Shell {
 }
 
 impl Shell {
+    /// Construct the middleware, inserting a shared clone of the shell-state
+    /// map into `extensions` so the individual shell tools can access it.
     pub fn new(extensions: Extensions, config: config::ShellConfig) -> Self {
         let shell_states = Arc::new(dashmap::DashMap::new());
         extensions.insert(shell_states.clone());

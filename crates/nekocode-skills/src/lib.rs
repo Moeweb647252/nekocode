@@ -44,6 +44,8 @@ pub struct SkillsMiddleware {
 }
 
 impl SkillsMiddleware {
+    /// Construct with the per-thread `config` and the on-disk `skills_dir`
+    /// that user-defined skills are discovered from.
     pub fn new(config: SkillsConfig, skills_dir: PathBuf) -> Self {
         Self {
             config: Arc::new(config),

@@ -80,6 +80,7 @@ pub struct SpawnSubthreadTool {
 }
 
 impl SpawnSubthreadTool {
+    /// Construct with the owning parent's `ctx`.
     pub fn new(ctx: SubthreadContext) -> Self {
         Self { ctx }
     }
@@ -247,6 +248,7 @@ pub struct ListSubthreadsTool {
 }
 
 impl ListSubthreadsTool {
+    /// Construct with the owning parent's `ctx`.
     pub fn new(ctx: SubthreadContext) -> Self {
         Self { ctx }
     }
@@ -298,6 +300,7 @@ pub struct InspectSubthreadTool {
 }
 
 impl InspectSubthreadTool {
+    /// Construct with the owning parent's `ctx`.
     pub fn new(ctx: SubthreadContext) -> Self {
         Self { ctx }
     }
@@ -378,6 +381,7 @@ pub struct ReadSubthreadTool {
 }
 
 impl ReadSubthreadTool {
+    /// Construct with the owning parent's `ctx`.
     pub fn new(ctx: SubthreadContext) -> Self {
         Self { ctx }
     }
@@ -530,6 +534,7 @@ pub struct SubthreadSettingsTool {
 }
 
 impl SubthreadSettingsTool {
+    /// Construct with the owning parent's `ctx`.
     pub fn new(ctx: SubthreadContext) -> Self {
         Self { ctx }
     }
@@ -592,6 +597,7 @@ pub struct SetSubthreadSettingsTool {
 }
 
 impl SetSubthreadSettingsTool {
+    /// Construct with the owning parent's `ctx`.
     pub fn new(ctx: SubthreadContext) -> Self {
         Self { ctx }
     }
@@ -711,6 +717,7 @@ pub struct StartSubthreadTool {
 }
 
 impl StartSubthreadTool {
+    /// Construct with the owning parent's `ctx`.
     pub fn new(ctx: SubthreadContext) -> Self {
         Self { ctx }
     }
@@ -828,6 +835,7 @@ pub struct WaitAnySubthreadTool {
 }
 
 impl WaitAnySubthreadTool {
+    /// Construct with the owning parent's `ctx`.
     pub fn new(ctx: SubthreadContext) -> Self {
         Self { ctx }
     }
@@ -921,6 +929,7 @@ pub struct WaitAllSubthreadsTool {
 }
 
 impl WaitAllSubthreadsTool {
+    /// Construct with the owning parent's `ctx`.
     pub fn new(ctx: SubthreadContext) -> Self {
         Self { ctx }
     }
@@ -1106,6 +1115,7 @@ pub struct DeleteSubthreadTool {
 }
 
 impl DeleteSubthreadTool {
+    /// Construct with the owning parent's `ctx`.
     pub fn new(ctx: SubthreadContext) -> Self {
         Self { ctx }
     }

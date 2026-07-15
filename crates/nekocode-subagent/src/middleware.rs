@@ -46,6 +46,11 @@ pub struct SubagentMiddleware {
 }
 
 impl SubagentMiddleware {
+    /// Construct the root subagent middleware for a parent agent: build the
+    /// per-parent `SubagentRegistry`, load the `agents.toml` catalogs relative
+    /// to the parent's working directory, publish the registry into the parent's
+    /// `Extensions`, and mint the tree-wide `run_cancel` flag. The middleware
+    /// instance is then returned via [`Self::from_context`].
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         specs: Vec<MiddlewareSpec>,

@@ -7,6 +7,10 @@ use nekocode_types::generate::{Message, Usage};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
+/// Lifecycle state of a single subagent's background run, driven by the
+/// registry as the spawned task progresses. `is_ready` distinguishes terminal
+/// states (from which a result can be read or waited-on unblocks) from the
+/// still-running ones.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubagentRunState {
     Idle,
@@ -16,6 +20,8 @@ pub enum SubagentRunState {
 }
 
 impl SubagentRunState {
+    /// Whether `read_subagent`'s result is available to consume: true once the
+    /// subagent reached a terminal state (`Finished` or `Error`).
     pub fn is_ready(&self) -> bool {
         matches!(self, SubagentRunState::Finished | SubagentRunState::Error(_))
     }
@@ -30,6 +36,9 @@ fn run_state_name(s: &SubagentRunState) -> &'static str {
     }
 }
 
+/// The captured outcome of one finished subagent run: its token `Usage`, the
+/// full ordered message list from the single turn, and whether `run_loop`
+/// reported `finished`. Serialized back to the model by `read_subagent`.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentRunResult {
@@ -38,6 +47,10 @@ pub struct SubagentRunResult {
     pub finished: bool,
 }
 
+/// Per-subagent in-memory tracking record: its allocated id, current run state,
+/// the spawned task's `JoinHandle`, a `Notify` for waiters to subscribe to
+/// state changes, the result slot (filled on finish), and the per-agent
+/// cancellation token. Lives inside a `SubagentRegistry` under the id key.
 #[derive(Debug)]
 pub struct SubagentState {
     pub agent_id: u64,
@@ -58,6 +71,8 @@ pub struct SubagentState {
 }
 
 impl SubagentState {
+    /// Construct the tracking record for a freshly-spawned subagent: start it
+    /// in `Running` with an unset result slot and its own cancel token.
     pub fn new(agent_id: u64) -> Self {
         Self {
             agent_id,
@@ -70,6 +85,11 @@ impl SubagentState {
     }
 }
 
+/// In-memory registry of all subagents spawned by one parent thread, keyed by
+/// the AtomicU64-allocated agent id. Published into `Agent.extensions` (typed
+/// slot `TypeId::of::<Arc<SubagentRegistry>>()`) by the parent's subagent
+/// middleware, and read by the six subagent tools. Lives only for the parent
+/// turn — `on_turn_end` cancels the tree and clears it.
 #[derive(Debug, Default)]
 pub struct SubagentRegistry {
     states: DashMap<u64, SubagentState>,
@@ -77,6 +97,8 @@ pub struct SubagentRegistry {
 }
 
 impl SubagentRegistry {
+    /// Construct an empty per-parent registry. Used by the subagent middleware
+    /// at parent activation and by tests.
     pub fn new() -> Self {
         Self::default()
     }
