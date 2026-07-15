@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+/// A model-authored request to invoke a tool, exactly as parsed from the
+/// provider's stream. `args` is the raw JSON the model produced for the call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCall {
@@ -8,6 +10,8 @@ pub struct ToolCall {
     pub args: serde_json::Value,
 }
 
+/// The outcome of executing a [`ToolCall`], keyed back to the originating
+/// call by `id` so the conversation can pair request and result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallResult {
@@ -15,6 +19,10 @@ pub struct ToolCallResult {
     pub result: ToolCallResultInner,
 }
 
+/// The success or error payload of a tool execution. Uses struct variants
+/// (not newtypes) so the `#[serde(tag = "type")]` tag always has a JSON
+/// object to attach to — see the inline comment below for the failure mode
+/// the newtype form used to cause.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "type")]
@@ -41,6 +49,10 @@ impl From<Result<serde_json::Value, ToolError>> for ToolCallResultInner {
         }
     }
 }
+
+/// A tool's declaration as advertised to the model: a name, a natural-language
+/// description, and a JSON Schema describing the accepted parameters. Sent to
+/// the provider as part of a generation request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolSpec {
@@ -53,6 +65,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 
+/// Errors a tool can produce, either before running (`InvalidParameters`) or
+/// during execution (`ExecutionError`). Stringy by design — tool results are
+/// surfaced to the model and the user, not matched programmatically.
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
     #[error("Invalid parameters: {0}")]
@@ -61,6 +76,9 @@ pub enum ToolError {
     ExecutionError(String),
 }
 
+/// The interface every concrete tool implements: advertise its [`ToolSpec`]
+/// and execute a call. Implementations must be `Send + Sync` so they can live
+/// behind an `Arc<dyn Tool>` in the [`ToolRegistry`].
 #[async_trait]
 pub trait Tool {
     fn spec(&self) -> ToolSpec;
@@ -68,6 +86,9 @@ pub trait Tool {
     async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError>;
 }
 
+/// The agent's name-keyed registry of available tools, built per thread by
+/// middleware during `before_generate` and consumed when the agent executes
+/// the tool calls a generation produced.
 #[derive(Default)]
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool + Send + Sync>>,

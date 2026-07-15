@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+/// Root of the server's TOML configuration (`~/.config/nekocode/config.toml`).
+///
+/// Holds the auth scheme, the available model backends plus the name of the
+/// default one, the HTTP listen settings, the app-level section, and the
+/// skills directory. Deserialized once at startup and shared behind an
+/// `Arc<RwLock<Config>>` in the server's `AppState`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     pub auth: AuthenticationConfig,
@@ -41,6 +47,10 @@ fn default_skills_directory() -> String {
         .to_string()
 }
 
+/// One entry in `Config.models`: a user-chosen `name` plus the
+/// backend-specific settings. The `name` is what `default_model` (and the
+/// API) refers to; `data` carries the typed backend config via a flattened
+/// [`ModelConfigType`] tag.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
     pub name: String,
@@ -48,6 +58,9 @@ pub struct ModelConfig {
     pub data: ModelConfigType,
 }
 
+/// Backend discriminator for a [`ModelConfig`], tagged by `"type"`. Today
+/// only the DeepSeek-compatible backend exists; it dispatches to either the
+/// Anthropic or OpenAI wire format via [`DeepSeekEndpoint`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ModelConfigType {
@@ -55,6 +68,10 @@ pub enum ModelConfigType {
     DeepSeek(DeepSeekConfig),
 }
 
+/// Connection and sampling parameters for the DeepSeek-compatible backend.
+/// Despite the name, the same config drives the Anthropic-format endpoint
+/// when [`endpoint`](DeepSeekConfig::endpoint) is set to
+/// [`Anthropic`](DeepSeekEndpoint::Anthropic).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeepSeekConfig {
     pub api_base: String,
@@ -68,6 +85,9 @@ pub struct DeepSeekConfig {
     pub endpoint: Option<DeepSeekEndpoint>,
 }
 
+/// Which wire format and endpoint shape to use against the configured
+/// `api_base`. `OpenAI` (the default) speaks the `/v1/chat/completions`
+/// protocol; `Anthropic` speaks the `/v1/messages` protocol.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DeepSeekEndpoint {
     #[serde(rename = "anthropic")]
@@ -76,6 +96,10 @@ pub enum DeepSeekEndpoint {
     OpenAI,
 }
 
+/// Authentication scheme for the HTTP API. `Password` requires clients to
+/// send a matching `Token` header (validated against this password, with a
+/// 30-day UUID token minted on login); `None` leaves every `/api` route
+/// open. Defaults to [`None`](AuthenticationConfig::None).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AuthenticationConfig {
@@ -86,6 +110,7 @@ pub enum AuthenticationConfig {
     None,
 }
 
+/// HTTP listen settings. Defaults to `localhost:51211`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub host: String,
@@ -101,5 +126,8 @@ impl Default for ServerConfig {
     }
 }
 
+/// Placeholder for app-level configuration ([`Config::app`]). Currently empty;
+/// kept as a typed section so future app settings can land without touching
+/// the rest of the schema.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {}
