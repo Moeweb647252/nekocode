@@ -1,6 +1,14 @@
 use serde::Serialize;
 use toasty::Json;
 
+/// A persisted middleware configuration row, child of a
+/// [`Thread`](crate::thread::Thread).
+///
+/// `name` identifies the middleware kind (shell, file, mcp, …) and `config`
+/// holds its serialized config as JSON. `enabled` toggles whether the
+/// middleware is built for its thread; for the singleton-per-thread kinds
+/// (Shell/Tool) it toggles the whole middleware, for Mcp it toggles that
+/// specific server row.
 #[derive(toasty::Model, Clone, Debug, Serialize)]
 pub struct Middleware {
     #[key]

@@ -2,6 +2,11 @@ use crate::serialize_json;
 use serde::Serialize;
 use toasty::{Deferred, Json, Model};
 
+/// A single persisted message, child of a [`Turn`](crate::turn::Turn).
+///
+/// `content` stores the [`nekocode_types::generate::MessageType`] as JSON
+/// (serialized via `crate::serialize_json`); `usage` is only set for assistant
+/// messages. `message_index` is the message's position within its turn.
 #[derive(Debug, Clone, Model, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {

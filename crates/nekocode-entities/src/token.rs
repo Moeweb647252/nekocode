@@ -1,6 +1,8 @@
 use serde::Serialize;
 use toasty::Model;
 
+/// An auth token minted on password login, checked by the API auth middleware
+/// against the `Token` header. `expires_at` enforces the 30-day lifetime.
 #[derive(Debug, Clone, Model, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Token {

@@ -1,6 +1,14 @@
 use serde::Serialize;
 use toasty::{Deferred, Model};
 
+/// A conversation thread, owned by a [`Workspace`](crate::workspace::Workspace)
+/// and owning [`Turn`](crate::turn::Turn)s and
+/// [`Middleware`](crate::middleware::Middleware) rows.
+///
+/// `working_directory` is the per-thread sandbox root for file tools;
+/// `model` names the configured backend to use. `own_by_id` links a subthread
+/// to its parent thread (see `nekocode-subthread`); top-level threads have it
+/// `None`.
 #[derive(Debug, Clone, Model, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Thread {

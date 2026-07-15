@@ -1,6 +1,12 @@
 use serde::Serialize;
 use toasty::{Json, Model};
 
+/// One user turn in a [`Thread`](crate::thread::Thread): the result of a
+/// full agent run (possibly multiple provider generations for tool rounds).
+///
+/// Stores the aggregated [`nekocode_types::generate::Usage`], whether the turn
+/// `finished` normally, and owns the turn's
+/// [`Message`](crate::message::Message)s via the `messages` relation.
 #[derive(Debug, Clone, Model, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Turn {
