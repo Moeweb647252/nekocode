@@ -78,8 +78,7 @@ pub async fn delete_threads_cascade(
     // purely in-memory (no DB cascade), so abort_all_and_clear is the full
     // cleanup.
     for id in to_delete.iter().rev() {
-        abort_subthread_tasks(active_threads, *id).await;
-        abort_subagent_tasks(active_threads, *id).await;
+        abort_thread_background_tasks(active_threads, *id).await;
         active_threads.remove(id);
         generate_states.remove(id);
     }
@@ -112,6 +111,18 @@ pub async fn delete_threads_cascade(
     transaction.commit().await?;
 
     Ok(())
+}
+
+/// Cancel every in-memory process or child run owned by an activated thread.
+/// Long-running shells intentionally survive ordinary turns, but must not
+/// survive deletion of their owning thread or workspace.
+pub(crate) async fn abort_thread_background_tasks(
+    active_threads: &dashmap::DashMap<u64, Arc<tokio::sync::RwLock<nekocode_core::agent::Agent>>>,
+    thread_id: u64,
+) {
+    abort_subthread_tasks(active_threads, thread_id).await;
+    abort_subagent_tasks(active_threads, thread_id).await;
+    abort_shell_tasks(active_threads, thread_id).await;
 }
 
 /// Read a thread's per-parent `SubthreadRegistry` from its activated `Agent`'s
@@ -157,5 +168,30 @@ async fn abort_subagent_tasks(
 
     if let Some(registry) = registry {
         let _aborted = registry.abort_all_and_clear();
+    }
+}
+
+/// Cancel all long-running shells owned by an activated thread. Clearing the
+/// state map drops input senders; the supervisor observes the cancellation
+/// token and reaps each child process.
+async fn abort_shell_tasks(
+    active_threads: &dashmap::DashMap<u64, Arc<tokio::sync::RwLock<nekocode_core::agent::Agent>>>,
+    thread_id: u64,
+) {
+    let shell_states: Option<Arc<dashmap::DashMap<u32, nekocode_shell::ShellTaskState>>> =
+        if let Some(agent_entry) = active_threads.get(&thread_id) {
+            let agent = agent_entry.value().read().await;
+            agent
+                .extensions
+                .get::<dashmap::DashMap<u32, nekocode_shell::ShellTaskState>>()
+        } else {
+            None
+        };
+
+    if let Some(shell_states) = shell_states {
+        for state in shell_states.iter() {
+            state.cancellation_token.cancel();
+        }
+        shell_states.clear();
     }
 }

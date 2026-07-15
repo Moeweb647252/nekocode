@@ -131,17 +131,6 @@ impl Tool for SpawnSubthreadTool {
 
         let mut db = self.ctx.db.clone();
 
-        // Inherit the parent's workspace (find_or_create is idempotent on the
-        // directory, and the parent already has one for this tree).
-        let workspace = nekocode_entities::workspace::find_or_create(
-            &mut db,
-            &working_directory,
-        )
-        .await
-        .map_err(|e| {
-            ToolError::ExecutionError(format!("Failed to find/create workspace: {e}"))
-        })?;
-
         // Resolve the parent's model so the subthread uses the same provider.
         let parent_thread = toasty::query!(Thread FILTER .id == #(self.ctx.parent_thread_id))
             .first()
@@ -157,10 +146,37 @@ impl Tool for SpawnSubthreadTool {
                 ))
             })?;
 
+        // Subthreads belong to the same workspace as their parent even when
+        // their working directory is a nested path. Older rows may lack that
+        // link, so backfill the parent before creating the child.
+        let workspace_id = match parent_thread.workspace_id {
+            Some(id) => id,
+            None => {
+                let workspace = nekocode_entities::workspace::find_or_create(
+                    &mut db,
+                    &parent_thread.working_directory,
+                )
+                .await
+                .map_err(|e| {
+                    ToolError::ExecutionError(format!("Failed to find/create parent workspace: {e}"))
+                })?;
+                let mut update = toasty::query!(Thread FILTER .id == #(parent_thread.id)).update();
+                update
+                    .set_workspace_id(Some(workspace.id));
+                update
+                    .exec(&mut db)
+                    .await
+                    .map_err(|e| {
+                        ToolError::ExecutionError(format!("Failed to link parent workspace: {e}"))
+                    })?;
+                workspace.id
+            }
+        };
+
         let subthread = toasty::create!(Thread {
             working_directory: working_directory.clone(),
             model: parent_thread.model.clone(),
-            workspace_id: Some(workspace.id),
+            workspace_id: Some(workspace_id),
             own_by_id: Some(self.ctx.parent_thread_id),
         })
         .exec(&mut db)
@@ -760,11 +776,9 @@ impl Tool for StartSubthreadTool {
             .to_string();
         self.ctx.require_owned_subthread(subthread_id).await?;
 
-        // Reject concurrent runs.
-        if matches!(
-            self.ctx.registry.run_state(subthread_id),
-            crate::registry::SubthreadRunState::Running
-        ) {
+        // Atomically reserve the run before activation so concurrent tool calls
+        // cannot both observe an idle state and start the same subthread.
+        if !self.ctx.registry.try_start(subthread_id) {
             return Err(ToolError::ExecutionError(format!(
                 "subthread {} is already running",
                 subthread_id
@@ -782,10 +796,15 @@ impl Tool for StartSubthreadTool {
         // agent run loop", so an already-activated (but not running) subthread
         // is a valid reuse target, not an error. The only refusal happens
         // earlier, when `run_state == Running`.
-        let agent = controller
-            .activate(subthread_id)
-            .await
-            .map_err(|e| ToolError::ExecutionError(format!("Failed to activate subthread: {e}")))?;
+        let agent = match controller.activate(subthread_id).await {
+            Ok(agent) => agent,
+            Err(e) => {
+                self.ctx.registry.set_error(subthread_id, e.to_string());
+                return Err(ToolError::ExecutionError(format!(
+                    "Failed to activate subthread: {e}"
+                )));
+            }
+        };
         let agent = match agent {
             crate::controller::ActivationOutcome::Activated(a)
             | crate::controller::ActivationOutcome::AlreadyActivated(a) => a,
@@ -815,7 +834,7 @@ impl Tool for StartSubthreadTool {
             controller_for_task.deactivate(subthread_id).await;
         });
 
-        self.ctx.registry.set_running(subthread_id, handle);
+        self.ctx.registry.attach_task_handle(subthread_id, handle);
 
         Ok(serde_json::json!({
             "subthread_id": subthread_id,

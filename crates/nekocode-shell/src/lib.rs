@@ -1,18 +1,35 @@
 use std::{
+    collections::VecDeque,
     sync::{
         Arc,
-        atomic::{AtomicU32, AtomicUsize},
+        Mutex,
+        atomic::AtomicU32,
     },
 };
 
 use nekocode_core::extensions::Extensions;
 use nekocode_core::middleware::Middleware;
-use sdd::AtomicOwned;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 pub mod config;
 pub mod tool;
+
+/// Maximum amount of unread output retained for one spawned shell. Older
+/// unread lines are discarded with an explicit `truncated` signal in the next
+/// fetch/wait response.
+pub const MAX_BUFFERED_OUTPUT_BYTES: usize = 1_048_576;
+pub const MAX_BUFFERED_OUTPUT_LINES: usize = 10_000;
+pub const MAX_COMPLETED_SHELLS: usize = 64;
+
+/// Buffered output and final status for one spawned shell.
+#[derive(Default)]
+pub struct ShellOutput {
+    pub lines: VecDeque<String>,
+    pub buffered_bytes: usize,
+    pub truncated: bool,
+    pub exit_code: Option<Option<i32>>,
+}
 
 /// Per-spawned-shell bookkeeping. Keyed in [`Shell::shell_states`] by its
 /// `shell_id` (an internal monotonic id, NOT the OS pid) to avoid PID-reuse
@@ -24,22 +41,21 @@ pub struct ShellTaskState {
     /// OS process id of the underlying child, reported for diagnostics only.
     pub pid: Option<u32>,
     pub command: String,
-    /// Append-only buffer of output lines (stdout + stderr interleaved).
-    pub output: Arc<AtomicOwned<boxcar::Vec<String>>>,
-    /// Read cursor: smallest buffer index not yet returned by
-    /// `fetch_shell_output`. Lets fetch be incremental and lossless.
-    pub output_cursor: Arc<AtomicUsize>,
+    /// Bounded queue of unread output lines (stdout + stderr interleaved),
+    /// plus the process's final exit status once it has stopped.
+    pub output: Arc<Mutex<ShellOutput>>,
     pub input: mpsc::UnboundedSender<String>,
     pub cancellation_token: CancellationToken,
     pub is_running: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// State carrier for the shell tool middleware. Holds the shared map of
-/// running shells (also inserted into the thread's `Extensions` so the
-/// spawned-shell tools can reach it), the resolved `ShellConfig`, and the
-/// monotonic id allocator. As a `Middleware` it registers the shell tool
-/// family (`shell`, `spawn_shell`, `cancel_shell`, `send_shell_input`,
-/// `fetch_shell_output`, `wait_shell_done`) in `before_generate`.
+/// running and recently completed shells (also inserted into the thread's
+/// `Extensions` so the spawned-shell tools can reach it), the resolved
+/// `ShellConfig`, and the monotonic id allocator. As a `Middleware` it
+/// registers the shell tool family (`shell`, `spawn_shell`, `cancel_shell`,
+/// `send_shell_input`, `fetch_shell_output`, `wait_shell_done`) in
+/// `before_generate`.
 pub struct Shell {
     pub shell_states: Arc<dashmap::DashMap<u32, ShellTaskState>>,
     pub config: Arc<config::ShellConfig>,

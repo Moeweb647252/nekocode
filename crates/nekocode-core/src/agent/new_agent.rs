@@ -24,11 +24,33 @@ use crate::provider::ProviderEvent;
 use crate::types::{GenerateRequest, GenerateResponse};
 
 impl Agent {
+    /// Run a turn without an external cancellation source. API callers that
+    /// need to interrupt an in-flight provider request should use
+    /// [`Self::run_loop_with_cancellation`].
     pub async fn run_loop(
         &self,
         input: Vec<MessageContent>,
         old_turns: Vec<Turn>,
         sink: crate::agent::AgentEventSink,
+    ) -> Result<Turn, Turn> {
+        self.run_loop_with_cancellation(
+            input,
+            old_turns,
+            sink,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Run a turn and cooperatively cancel every active provider request when
+    /// `cancellation` fires. The normal error path still runs middleware
+    /// cleanup, so detached middleware work cannot outlive an interrupted turn.
+    pub async fn run_loop_with_cancellation(
+        &self,
+        input: Vec<MessageContent>,
+        old_turns: Vec<Turn>,
+        sink: crate::agent::AgentEventSink,
+        cancellation: tokio_util::sync::CancellationToken,
     ) -> Result<Turn, Turn> {
         // Flatten the working history into a single message list. Owned once,
         // reused as the immutable prefix when rebuilding each generation's
@@ -110,12 +132,23 @@ impl Agent {
                     // Forward provider stream events to the client, skipping
                     // the provider's MessageStart (the agent emits its own
                     // above) so the client doesn't see two per generation.
-                    while let Some(event) = rx.recv().await {
+                    while let Some(event) = tokio::select! {
+                        _ = cancellation.cancelled() => {
+                            handle.abort();
+                            let _ = handle.await;
+                            return Err(AgentError::Cancelled);
+                        }
+                        event = rx.recv() => event,
+                    } {
                         if matches!(event, ProviderEvent::MessageStart) {
                             continue;
                         }
                         let stream_event: StreamEvent = (&event).into();
-                        Self::send(&sink, stream_event.data)?;
+                        if let Err(error) = Self::send(&sink, stream_event.data) {
+                            handle.abort();
+                            let _ = handle.await;
+                            return Err(error);
+                        }
                     }
                     let response = handle
                         .await
@@ -276,7 +309,10 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     use crate::agent::test_mocks::{
         EchoMiddleware, InjectMiddleware, MockProvider, OneShotRegenerateMiddleware, text_msg,
@@ -286,6 +322,29 @@ mod tests {
     use crate::middleware::AgentControlFlow;
 
     static AGENT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    struct PendingProvider;
+
+    #[async_trait::async_trait]
+    impl crate::provider::Provider for PendingProvider {
+        async fn stream_generate(
+            &self,
+            _: GenerateRequest,
+            _: tokio::sync::mpsc::UnboundedSender<ProviderEvent>,
+        ) -> Result<crate::provider::ProviderResponse, crate::provider::ProviderError> {
+            std::future::pending().await
+        }
+    }
+
+    struct CleanupMiddleware(Arc<AtomicBool>);
+
+    #[async_trait::async_trait]
+    impl crate::middleware::Middleware for CleanupMiddleware {
+        async fn on_turn_end(&self) -> Result<(), anyhow::Error> {
+            self.0.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
 
     /// Build an `Agent` whose `db` is a real (temp-file) toasty DB. `run_loop`
     /// never queries it, so the schema is never exercised — the handle only
@@ -429,6 +488,36 @@ mod tests {
             saw_error_event,
             "expected a MessageEnd(Error) stream event on failure"
         );
+    }
+
+    #[tokio::test]
+    async fn cancellation_aborts_provider_and_runs_turn_cleanup() {
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let agent = make_agent(
+            Arc::new(PendingProvider),
+            vec![Box::new(CleanupMiddleware(cleaned.clone()))],
+        )
+        .await;
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let run = agent.run_loop_with_cancellation(
+            text_input("hi"),
+            Vec::new(),
+            crate::agent::AgentEventSink::new(tx),
+            cancellation.clone(),
+        );
+
+        let cancel_task = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            cancellation.cancel();
+        });
+        let turn = tokio::time::timeout(std::time::Duration::from_secs(1), run)
+            .await
+            .expect("cancellation should finish the run")
+            ;
+        cancel_task.await.expect("cancellation task should join");
+        assert!(turn.is_err(), "cancelled turn returns a partial result");
+        assert!(cleaned.load(Ordering::SeqCst), "middleware cleanup ran");
     }
 
     /// The outer middleware regeneration loop: `OneShotRegenerateMiddleware`

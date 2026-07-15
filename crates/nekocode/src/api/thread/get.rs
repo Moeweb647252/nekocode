@@ -31,10 +31,15 @@ pub async fn get_thread(
         .await?;
     if let Some(thread) = thread {
         let turns = if let Some(limit) = payload.turns_limit {
-            toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .id ASC LIMIT #limit)
+            // Select the newest page, then restore chronological order for the
+            // client transcript. `ASC LIMIT` would permanently hide recent
+            // messages once a thread grew past the requested page size.
+            let mut turns = toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .id DESC LIMIT #limit)
                 .include(Turn::fields().messages())
                 .exec(&mut state.db)
-                .await?
+                .await?;
+            turns.reverse();
+            turns
         } else {
             // No limit requested: return only the latest turn (DESC + LIMIT 1).
             // Previously this was `ASC LIMIT 1`, which returned the *oldest* turn.

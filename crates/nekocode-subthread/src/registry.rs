@@ -72,10 +72,11 @@ impl SubthreadRegistry {
         Self::default()
     }
 
-    /// Insert an `Idle` subthread entry. Called by `spawn_subthread`.
+    /// Insert an `Idle` subthread entry when it is not already tracked. Called
+    /// by `spawn_subthread`; preserving an existing entry avoids resetting a
+    /// run that is already in flight.
     pub fn insert_idle(&self, thread_id: u64) {
-        self.states
-            .insert(thread_id, SubthreadState::new(thread_id));
+        self.states.entry(thread_id).or_insert_with(|| SubthreadState::new(thread_id));
     }
 
     /// Snapshot the run state of a subthread, defaulting to `Idle` if absent.
@@ -86,16 +87,43 @@ impl SubthreadRegistry {
             .unwrap_or(SubthreadRunState::Idle)
     }
 
-    /// Mark a subthread as `Running` and store its task handle.
-    /// Called by `start_subthread` right after spawning the background task.
-    pub fn set_running(
-        &self,
-        thread_id: u64,
-        task_handle: tokio::task::JoinHandle<()>,
-    ) {
-        if let Some(mut s) = self.states.get_mut(&thread_id) {
-            s.run_state = SubthreadRunState::Running;
-            s.task_handle = Some(task_handle);
+    /// Atomically reserve a subthread for a background run. This also restores
+    /// a registry entry for subthreads persisted before the parent agent was
+    /// reactivated.
+    pub fn try_start(&self, thread_id: u64) -> bool {
+        match self.states.entry(thread_id) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                if matches!(entry.get().run_state, SubthreadRunState::Running) {
+                    false
+                } else {
+                    let state = entry.get_mut();
+                    state.run_state = SubthreadRunState::Running;
+                    state.task_handle = None;
+                    true
+                }
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert(SubthreadState {
+                    thread_id,
+                    run_state: SubthreadRunState::Running,
+                    task_handle: None,
+                    notify: Arc::new(Notify::new()),
+                });
+                true
+            }
+        }
+    }
+
+    /// Associate the task handle with a previously reserved run. If the run
+    /// completed before the handle was attached, retain the terminal state and
+    /// discard the now-completed handle instead of regressing it to `Running`.
+    pub fn attach_task_handle(&self, thread_id: u64, task_handle: tokio::task::JoinHandle<()>) {
+        if let Some(mut state) = self.states.get_mut(&thread_id)
+            && matches!(state.run_state, SubthreadRunState::Running)
+        {
+            state.task_handle = Some(task_handle);
+        } else {
+            task_handle.abort();
         }
     }
 
@@ -189,6 +217,14 @@ mod tests {
         reg.insert_idle(1);
         reg.set_finished(1);
         assert!(reg.run_state(1).is_ready());
+    }
+
+    #[test]
+    fn try_start_restores_missing_entry_and_rejects_a_second_run() {
+        let reg = SubthreadRegistry::new();
+        assert!(reg.try_start(7));
+        assert!(matches!(reg.run_state(7), SubthreadRunState::Running));
+        assert!(!reg.try_start(7));
     }
 
     #[test]

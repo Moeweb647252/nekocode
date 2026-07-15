@@ -3,6 +3,9 @@
 /// in anyhow.
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
+    #[error("Generation cancelled")]
+    Cancelled,
+
     #[error("Item not found: {0}")]
     ItemNotFound(String),
 

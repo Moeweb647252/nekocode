@@ -28,11 +28,9 @@ pub async fn create_thread(
     })
     .exec(&mut state.db)
     .await?;
-    // Seed both middlewares with the thread's working directory so shell
-    // commands and file tools are scoped to the project root. Config values
-    // are built from the typed config structs via `to_value()` so serialization
-    // stays locked to the config definition (no hand-written `json!({...})`
-    // literals that could drift from the struct).
+    // Seed both middlewares with the thread's working directory. It is the
+    // initial cwd for shell commands and the enforced root for file tools;
+    // shell commands themselves are intentionally not a filesystem sandbox.
     let shell_cfg = nekocode_shell::config::ShellConfig {
         working_directory: Some(payload.working_directory.clone()),
         ..Default::default()

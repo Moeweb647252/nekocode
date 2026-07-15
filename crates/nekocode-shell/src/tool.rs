@@ -2,28 +2,81 @@ use std::{
     process::Stdio,
     sync::{
         Arc,
-        atomic::{self, AtomicU32, AtomicUsize},
+        Mutex,
+        atomic::{self, AtomicU32},
     },
     time::Duration,
 };
 
 use nekocode_types::tool::{Tool, ToolError};
-use sdd::{AtomicOwned, Guard};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     sync::mpsc,
 };
 use tracing::debug;
 
-use crate::{ShellTaskState, config::ShellConfig};
+use crate::{
+    MAX_BUFFERED_OUTPUT_BYTES, MAX_BUFFERED_OUTPUT_LINES, MAX_COMPLETED_SHELLS, ShellOutput,
+    ShellTaskState, config::ShellConfig,
+};
 
-/// Push a line into the shared output buffer. The buffer is wrapped in an
-/// `AtomicOwned` so it can be swapped atomically; readers must load under a
-/// [`sdd::Guard`].
-fn push_output(buf: &AtomicOwned<boxcar::Vec<String>>, line: String) {
-    let guard = Guard::new();
-    if let Some(v) = buf.load(atomic::Ordering::Acquire, &guard).as_ref() {
-        v.push(line);
+struct OutputChunk {
+    text: String,
+    truncated: bool,
+}
+
+fn lock_output(output: &Mutex<ShellOutput>) -> std::sync::MutexGuard<'_, ShellOutput> {
+    output.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Push a line into the bounded unread-output queue. The next reader is told
+/// explicitly when older lines had to be discarded.
+fn push_output(output: &Mutex<ShellOutput>, mut line: String) {
+    let line_was_truncated = line.len() > MAX_BUFFERED_OUTPUT_BYTES;
+    if line_was_truncated {
+        let mut end = MAX_BUFFERED_OUTPUT_BYTES;
+        while !line.is_char_boundary(end) {
+            end -= 1;
+        }
+        line.truncate(end);
+    }
+
+    let mut output = lock_output(output);
+    output.truncated |= line_was_truncated;
+    while !output.lines.is_empty()
+        && (output.lines.len() >= MAX_BUFFERED_OUTPUT_LINES
+            || output.buffered_bytes + line.len() > MAX_BUFFERED_OUTPUT_BYTES)
+    {
+        if let Some(discarded) = output.lines.pop_front() {
+            output.buffered_bytes -= discarded.len();
+            output.truncated = true;
+        }
+    }
+    output.buffered_bytes += line.len();
+    output.lines.push_back(line);
+}
+
+fn record_exit(output: &Mutex<ShellOutput>, exit_code: Option<i32>) {
+    lock_output(output).exit_code = Some(exit_code);
+}
+
+fn exit_code(output: &Mutex<ShellOutput>) -> Option<i32> {
+    lock_output(output).exit_code.flatten()
+}
+
+fn reap_completed_shells(shell_states: &dashmap::DashMap<u32, ShellTaskState>) {
+    let mut completed: Vec<u32> = shell_states
+        .iter()
+        .filter(|entry| !entry.is_running.load(atomic::Ordering::SeqCst))
+        .map(|entry| *entry.key())
+        .collect();
+    if completed.len() <= MAX_COMPLETED_SHELLS {
+        return;
+    }
+    completed.sort_unstable();
+    let prune_count = completed.len() - MAX_COMPLETED_SHELLS;
+    for shell_id in completed.into_iter().take(prune_count) {
+        shell_states.remove(&shell_id);
     }
 }
 
@@ -135,10 +188,10 @@ impl Tool for OnceShellTool {
     }
 }
 
-/// Spawn a long-running shell process. Output is buffered into an append-only
-/// ring per shell id and read incrementally via `fetch_shell_output`. A
-/// single supervisor task owns the child, drains stdout + stderr to EOF
-/// independently, and cleans up the shell state on exit or cancellation.
+/// Spawn a long-running shell process. Output is buffered in a bounded queue
+/// per shell id and read incrementally via `fetch_shell_output`. Completed
+/// shells remain available until their final output is consumed or the bounded
+/// completed-shell cache is reaped.
 pub struct SpawnShellTool {
     pub shell_states: Arc<dashmap::DashMap<u32, ShellTaskState>>,
     pub config: Arc<ShellConfig>,
@@ -172,6 +225,8 @@ impl Tool for SpawnShellTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParameters("Missing 'command' parameter".into()))?;
 
+        reap_completed_shells(&self.shell_states);
+
         let mut cmd = tokio::process::Command::new(self.config.program());
         cmd.arg("-c").arg(command);
         cmd.stdin(Stdio::piped())
@@ -198,8 +253,7 @@ impl Tool for SpawnShellTool {
             .ok_or_else(|| ToolError::ExecutionError("Failed to capture stdin".into()))?;
 
         let shell_id = self.allocate_id.fetch_add(1, atomic::Ordering::Relaxed);
-        let output = Arc::new(AtomicOwned::new(boxcar::Vec::new()));
-        let output_cursor = Arc::new(AtomicUsize::new(0));
+        let output = Arc::new(Mutex::new(ShellOutput::default()));
         let (input_tx, mut input_rx) = mpsc::unbounded_channel::<String>();
         let is_running = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let cancellation_token = tokio_util::sync::CancellationToken::new();
@@ -211,14 +265,11 @@ impl Tool for SpawnShellTool {
                 pid,
                 command: command.to_string(),
                 output: output.clone(),
-                output_cursor: output_cursor.clone(),
                 input: input_tx,
                 cancellation_token: cancellation_token.clone(),
                 is_running: is_running.clone(),
             },
         );
-
-        let shell_states = self.shell_states.clone();
 
         tokio::spawn(async move {
             // Reader tasks: each runs its stream to EOF independently, so a
@@ -284,19 +335,22 @@ impl Tool for SpawnShellTool {
             // Drain remaining output and stop pumps.
             let _ = stdout_task.await;
             let _ = stderr_task.await;
-            // Closing stdin makes the pump exit cleanly.
-            drop(stdin_task);
+            // The retained completed-shell state still owns an input sender, so
+            // explicitly stop the pump instead of waiting for that sender to
+            // be dropped.
+            stdin_task.abort();
 
             is_running.store(false, atomic::Ordering::SeqCst);
             if let Some(status) = exit_status {
+                record_exit(&output, status.code());
                 push_output(
                     &output,
                     format!("[exit_code={}]", status.code().unwrap_or(-1)),
                 );
             } else {
+                record_exit(&output, None);
                 push_output(&output, "[terminated]".to_string());
             }
-            shell_states.remove(&shell_id);
         });
 
         Ok(serde_json::json!({
@@ -334,6 +388,11 @@ impl Tool for CancelShellTool {
         let shell_id = parse_shell_id(&params)?;
         match self.shell_states.get(&shell_id) {
             Some(entry) => {
+                if !entry.is_running.load(atomic::Ordering::SeqCst) {
+                    return Err(ToolError::ExecutionError(
+                        "Shell process is not running".into(),
+                    ));
+                }
                 entry.cancellation_token.cancel();
                 Ok(serde_json::json!({ "status": "cancelled", "shell_id": shell_id }))
             }
@@ -404,8 +463,8 @@ impl Tool for SendShellInputTool {
 }
 
 /// Fetch output produced since the previous fetch for a shell. Returns the new
-/// lines joined by `\n`, plus the running flag. Reads are incremental and
-/// lossless: the cursor is advanced after each fetch.
+/// lines joined by `\n`, plus the running flag. Output is incremental and
+/// bounded; `truncated=true` reports that unread output exceeded the buffer.
 pub struct FetchShellOutputTool {
     pub shell_states: Arc<dashmap::DashMap<u32, ShellTaskState>>,
 }
@@ -441,18 +500,26 @@ impl Tool for FetchShellOutputTool {
             })?
             .clone();
 
-        let new_output = drain_output(&entry);
-        Ok(serde_json::json!({
+        let output = drain_output(&entry);
+        let is_running = entry.is_running.load(atomic::Ordering::SeqCst);
+        let result = serde_json::json!({
             "shell_id": shell_id,
-            "output": new_output,
-            "is_running": entry.is_running.load(atomic::Ordering::SeqCst),
-        }))
+            "output": output.text,
+            "truncated": output.truncated,
+            "is_running": is_running,
+            "exit_code": (!is_running).then(|| exit_code(&entry.output)).flatten(),
+        });
+        if !is_running {
+            self.shell_states.remove(&shell_id);
+        }
+        Ok(result)
     }
 }
 
 /// Wait for a previously spawned long-running shell to finish, blocking up to
 /// a caller-supplied timeout. On completion, returns the (possibly empty) tail
-/// of output produced since the last fetch plus the exit status. On timeout the
+/// of output produced since the last fetch, its truncation status, and the exit
+/// code. On timeout the
 /// call still succeeds — it simply tells the model the shell is still running,
 /// so the model can decide whether to wait again or cancel. The shell is never
 /// killed by this tool.
@@ -505,25 +572,27 @@ impl Tool for WaitShellDoneTool {
             let done_state = match self.shell_states.get(&shell_id) {
                 Some(entry) => {
                     if !entry.is_running.load(atomic::Ordering::SeqCst) {
-                        // Finished but the entry may still be present for a
-                        // brief window; drain the tail so the caller sees the
-                        // final output and the [exit_code=...] marker.
-                        Some(drain_output(&entry))
+                        Some((
+                            drain_output(&entry),
+                            exit_code(&entry.output),
+                        ))
                     } else {
                         None
                     }
                 }
-                None => {
-                    // Entry gone: the shell already finished and was cleaned
-                    // up before we observed it. There is no tail to return.
-                    Some(String::new())
-                }
+                None => return Err(ToolError::InvalidParameters(format!(
+                    "No shell with shell_id {}",
+                    shell_id
+                ))),
             };
-            if let Some(tail) = done_state {
+            if let Some((tail, exit_code)) = done_state {
+                self.shell_states.remove(&shell_id);
                 return Ok(serde_json::json!({
                     "shell_id": shell_id,
                     "status": "done",
-                    "output": tail,
+                    "output": tail.text,
+                    "truncated": tail.truncated,
+                    "exit_code": exit_code,
                 }));
             }
 
@@ -547,31 +616,16 @@ impl Tool for WaitShellDoneTool {
     }
 }
 
-/// Read all lines at index >= cursor from the buffer, then advance the cursor
-/// to the new length. Returns the joined new lines.
-fn drain_output(state: &ShellTaskState) -> String {
-    let guard = Guard::new();
-    let Some(buf) = state
-        .output
-        .load(atomic::Ordering::Acquire, &guard)
-        .as_ref()
-    else {
-        // Buffer swapped out concurrently; nothing to read this round.
-        return String::new();
-    };
-    let start = state.output_cursor.load(atomic::Ordering::Acquire);
-    let total = buf.count();
-    if start >= total {
-        return String::new();
+/// Drain every unread line from the bounded queue. Removing consumed lines
+/// keeps a long-running shell's memory use proportional to unread output.
+fn drain_output(state: &ShellTaskState) -> OutputChunk {
+    let mut output = lock_output(&state.output);
+    let text = output.lines.drain(..).collect::<Vec<_>>().join("\n");
+    output.buffered_bytes = 0;
+    OutputChunk {
+        text,
+        truncated: std::mem::take(&mut output.truncated),
     }
-    let mut collected: Vec<String> = Vec::with_capacity(total - start);
-    for i in start..total {
-        if let Some(line) = buf.get(i) {
-            collected.push(line.clone());
-        }
-    }
-    state.output_cursor.store(total, atomic::Ordering::Release);
-    collected.join("\n")
 }
 
 fn parse_shell_id(params: &serde_json::Value) -> Result<u32, ToolError> {
@@ -692,5 +746,34 @@ mod tests {
             err.to_string().contains("timed out"),
             "expected timeout, got: {err:?}",
         );
+    }
+
+    #[tokio::test]
+    async fn wait_shell_done_returns_final_output_and_exit_code() {
+        let shell_states = Arc::new(dashmap::DashMap::new());
+        let spawn = SpawnShellTool {
+            shell_states: shell_states.clone(),
+            config: Arc::new(ShellConfig::default()),
+            allocate_id: Arc::new(AtomicU32::new(0)),
+        };
+        let shell_id = spawn
+            .call(json!({ "command": "printf final; exit 7" }))
+            .await
+            .unwrap()["shell_id"]
+            .as_u64()
+            .unwrap() as u32;
+
+        let wait = WaitShellDoneTool {
+            shell_states: shell_states.clone(),
+        };
+        let result = wait
+            .call(json!({ "shell_id": shell_id, "timeout": 2 }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["status"], "done");
+        assert!(result["output"].as_str().unwrap().contains("final"));
+        assert_eq!(result["exit_code"], 7);
+        assert!(!shell_states.contains_key(&shell_id));
     }
 }

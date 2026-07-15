@@ -29,9 +29,9 @@ onMounted(loadWorkspaces)
 /**
  * Per-workspace tree view: top-level threads (ownById == null) plus an index
  * mapping each parent thread id to its subthreads. Built once per render from
- * the flat `ws.threads` array the backend returns — subthreads are already in
- * the payload (they share the workspace because their working_directory lives
- * under the parent's), so no extra request is needed.
+ * the flat `ws.threads` array the backend returns. Newly created subthreads
+ * reuse their parent's workspace, so no extra request is needed to render the
+ * tree.
  */
 interface WorkspaceTree {
   ws: WorkspaceResponse

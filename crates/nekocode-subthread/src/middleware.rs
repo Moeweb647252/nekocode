@@ -24,9 +24,9 @@ pub struct SubthreadMiddleware {
 }
 
 impl SubthreadMiddleware {
-    /// Build a middleware for `parent_thread_id`. A fresh `SubthreadRegistry`
-    /// is created and shared with the parent's `Agent.extensions` so external
-    /// callers (cascade delete) can locate it.
+    /// Build a middleware for `parent_thread_id`. A fresh in-memory registry is
+    /// shared with the parent's `Agent.extensions`; persisted subthreads are
+    /// restored into it lazily when a run is reserved.
     pub fn new(
         extensions: Extensions,
         db: toasty::Db,

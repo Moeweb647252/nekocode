@@ -22,9 +22,9 @@ const messages = computed(() => {
 const userInput = ref("");
 const sending = ref(false);
 
-// Model badge for the thread sub-header. Only the Thread summary carries a
-// model field; the loaded ThreadResponse detail does not.
-const displayModel = computed(() => selectedThread?.value?.model ?? '')
+// Prefer the loaded detail, which is refreshed after a settings change; the
+// sidebar summary remains a fallback while the detail request is in flight.
+const displayModel = computed(() => thread.value?.model ?? selectedThread?.value?.model ?? '')
 
 // Working directory is the project context — the headline of the header.
 const displayWorkdir = computed(() => {

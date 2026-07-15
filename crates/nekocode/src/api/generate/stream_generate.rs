@@ -67,12 +67,14 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
         .map_err(|e| anyhow!("error loading turn context: {e}"))?;
     let thread_id = payload.thread_id;
     let user_input = payload.user_input;
+    let agent_cancellation = cancellation_token.clone();
     let handle = tokio::spawn(async move {
         agent
-            .run_loop(
+            .run_loop_with_cancellation(
                 vec![MessageContent::Text { content: user_input }],
                 old_turns,
                 nekocode_core::agent::AgentEventSink::new(tx),
+                agent_cancellation,
             )
             .await
     });
@@ -96,9 +98,9 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
     let result = tokio::select! {
         res = task => res,
         _ = cancellation_token.cancelled() => {
-            // Interrupted: abort the agent task, send Interrupted, and return
-            // without emitting a second (Error) Stop frame.
-            handle.abort();
+            // The agent observes this token, aborts its provider task, and
+            // runs middleware cleanup before returning.
+            let _ = handle.await;
             super::send_stop(socket, Reason::Interrupted, serde_json::Value::Null).await;
             return Ok(());
         }
@@ -133,11 +135,12 @@ pub async fn handle_websocket(socket: &mut ws::WebSocket, state: AppState) -> an
             }
             Ok(())
         }
-        // The forwarder errored (socket send failed, etc.). Abort the agent so
-        // it doesn't keep running detached, then propagate the error so the
-        // upgrade closure sends an Error frame once.
+        // The forwarder errored (socket send failed, etc.). Signal cooperative
+        // cancellation and wait for cleanup before the per-thread state is
+        // released.
         Err(e) => {
-            handle.abort();
+            cancellation_token.cancel();
+            let _ = handle.await;
             Err(e)
         }
     }

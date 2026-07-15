@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use nekocode_core::extensions::Extensions;
-use nekocode_entities::{middleware::Middleware, prepare_db, thread::Thread};
+use nekocode_entities::{middleware::Middleware, prepare_db, thread::Thread, workspace::Workspace};
 use nekocode_subthread::{
     SubthreadConfig, SubthreadMiddleware,
     controller::{ActivationOutcome, ThreadController},
@@ -126,9 +126,16 @@ async fn setup() -> (toasty::Db, Thread) {
     ));
     std::fs::create_dir_all(&parent_wd).unwrap();
     let parent_wd_str = parent_wd.to_string_lossy().to_string();
+    let workspace = toasty::create!(Workspace {
+        working_directory: parent_wd_str.clone(),
+    })
+    .exec(&mut db)
+    .await
+    .expect("create workspace");
     let parent = toasty::create!(Thread {
         working_directory: parent_wd_str.clone(),
         model: "default".to_string(),
+        workspace_id: Some(workspace.id),
     })
     .exec(&mut db)
     .await
@@ -200,6 +207,14 @@ async fn spawn_then_list_then_inspect() {
     assert_eq!(out["subthreads"].as_array().unwrap().len(), 1);
     assert_eq!(out["subthreads"][0]["subthread_id"].as_u64(), Some(sub_id));
     assert_eq!(out["subthreads"][0]["run_state"], "idle");
+
+    let child = toasty::query!(Thread FILTER .id == #sub_id)
+        .first()
+        .exec(&mut db.clone())
+        .await
+        .expect("query child")
+        .expect("child exists");
+    assert_eq!(child.workspace_id, parent.workspace_id);
 
     let inspect = tools.get("inspect_subthread").unwrap();
     let out = inspect

@@ -76,11 +76,24 @@ pub(crate) async fn auth_middleware_inner(
     if config == AuthenticationConfig::None {
         return Ok(true);
     }
-    let token = headers
-        .get("Token")
-        .ok_or(ApiError::Unauthorized)?
-        .to_str()
-        .map_err(anyhow::Error::from)?;
+    // Browsers cannot attach an arbitrary `Token` header during a WebSocket
+    // upgrade. The web client therefore sends the same opaque token as its
+    // single subprotocol; accept that transport form in addition to normal
+    // HTTP requests. A protocol header may be comma-separated, so only use
+    // the first value the browser offered.
+    let token = match headers.get("Token") {
+        Some(value) => value.to_str().map_err(anyhow::Error::from)?,
+        None => headers
+            .get(axum::http::header::SEC_WEBSOCKET_PROTOCOL)
+            .ok_or(ApiError::Unauthorized)?
+            .to_str()
+            .map_err(anyhow::Error::from)?
+            .split(',')
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(ApiError::Unauthorized)?,
+    };
     if let Some(token) = toasty::query!(Token FILTER .token == #token)
         .first()
         .exec(&mut state.db)

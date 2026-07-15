@@ -122,7 +122,7 @@ export type ToolCallResultInner =
 
 export type RawStreamEventData =
   | { type: 'messageStart'; data: MessageMetadata }
-  | { type: 'messageEnd' }
+  | { type: 'messageEnd'; data: ProviderStopReason }
   | { type: 'turnEnd' }
   | { type: 'content'; data: string }
   | { type: 'reasoningContent'; data: string }
@@ -132,6 +132,9 @@ export type RawStreamEventData =
 export interface MessageMetadata {
   role: 'user' | 'assistant' | 'middleware'
 }
+
+/** Matches Rust's externally tagged generate::StopReason enum. */
+export type ProviderStopReason = 'stop' | 'length' | { error: string }
 
 export interface StreamEvent {
   data: RawStreamEventData

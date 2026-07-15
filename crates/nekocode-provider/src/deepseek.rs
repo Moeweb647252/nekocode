@@ -224,53 +224,53 @@ impl DeepSeek {
 // ── Response accumulator ──
 
 struct ResponseAccumulator {
-    text: String,
-    reasoning: String,
-    tool_calls: Vec<ToolCall>,
+    blocks: Vec<AssistantContentBlock>,
 }
 
 impl ResponseAccumulator {
     fn new() -> Self {
         Self {
-            text: String::new(),
-            reasoning: String::new(),
-            tool_calls: Vec::new(),
+            blocks: Vec::new(),
         }
     }
 
     fn ingest(&mut self, event: &ProviderEvent) {
         match event {
-            ProviderEvent::Content(s) => self.text.push_str(s),
-            ProviderEvent::ReasoningContent(s) => self.reasoning.push_str(s),
-            ProviderEvent::ToolCall(tc) => self.tool_calls.push(tc.clone()),
+            ProviderEvent::Content(content) => match self.blocks.last_mut() {
+                Some(AssistantContentBlock::Text { content: existing, .. }) => {
+                    existing.push_str(content);
+                }
+                _ => self.blocks.push(AssistantContentBlock::Text {
+                    content: content.clone(),
+                    reasoning_content: None,
+                }),
+            },
+            ProviderEvent::ReasoningContent(reasoning) => match self.blocks.last_mut() {
+                Some(AssistantContentBlock::Text {
+                    reasoning_content,
+                    ..
+                }) => {
+                    reasoning_content
+                        .get_or_insert_with(String::new)
+                        .push_str(reasoning);
+                }
+                _ => self.blocks.push(AssistantContentBlock::Text {
+                    content: String::new(),
+                    reasoning_content: Some(reasoning.clone()),
+                }),
+            },
+            ProviderEvent::ToolCall(tool_call) => {
+                self.blocks
+                    .push(AssistantContentBlock::ToolCall(tool_call.clone()));
+            }
             ProviderEvent::MessageStart | ProviderEvent::MessageEnd(_) => {}
         }
     }
 
     fn finish(self) -> AssistantMessage {
-        let mut blocks: Vec<AssistantContentBlock> = Vec::new();
-
-        if !self.text.is_empty() {
-            blocks.push(AssistantContentBlock::Text {
-                content: self.text,
-                reasoning_content: if self.reasoning.is_empty() {
-                    None
-                } else {
-                    Some(self.reasoning)
-                },
-            });
-        } else if !self.reasoning.is_empty() {
-            blocks.push(AssistantContentBlock::Text {
-                content: String::new(),
-                reasoning_content: Some(self.reasoning),
-            });
+        AssistantMessage {
+            blocks: self.blocks,
         }
-
-        for tc in self.tool_calls {
-            blocks.push(AssistantContentBlock::ToolCall(tc));
-        }
-
-        AssistantMessage { blocks }
     }
 }
 
@@ -468,14 +468,67 @@ fn to_anthropic_message(msg: &MessageType) -> MessageParam {
                 },
             )]),
         },
-        MessageType::ToolCallResult(result) => MessageParam {
-            role: AnthropicRole::User,
-            content: MessageContentParam::Blocks(vec![ContentBlockParam::ToolResultBlockParam(
-                crate::parser::anthropic::types::ToolResultBlockParam {
-                    tool_use_id: result.id.clone(),
-                    content: vec![],
-                },
-            )]),
-        },
+        MessageType::ToolCallResult(result) => {
+            let (text, is_error) = match &result.result {
+                ToolCallResultInner::Success { value } => (value.to_string(), None),
+                ToolCallResultInner::Error { error } => (error.clone(), Some(true)),
+            };
+            MessageParam {
+                role: AnthropicRole::User,
+                content: MessageContentParam::Blocks(vec![ContentBlockParam::ToolResultBlockParam(
+                    crate::parser::anthropic::types::ToolResultBlockParam {
+                        tool_use_id: result.id.clone(),
+                        content: vec![crate::parser::anthropic::types::ContentBlock::TextBlock {
+                            text,
+                        }],
+                        is_error,
+                    },
+                )]),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accumulator_preserves_text_tool_text_order() {
+        let mut accumulator = ResponseAccumulator::new();
+        accumulator.ingest(&ProviderEvent::Content("before".into()));
+        accumulator.ingest(&ProviderEvent::ToolCall(ToolCall {
+            id: "call_1".into(),
+            name: "echo".into(),
+            args: serde_json::json!({}),
+        }));
+        accumulator.ingest(&ProviderEvent::Content("after".into()));
+
+        let message = accumulator.finish();
+        assert_eq!(message.blocks.len(), 3);
+        assert!(matches!(
+            &message.blocks[0],
+            AssistantContentBlock::Text { content, .. } if content == "before"
+        ));
+        assert!(matches!(message.blocks[1], AssistantContentBlock::ToolCall(_)));
+        assert!(matches!(
+            &message.blocks[2],
+            AssistantContentBlock::Text { content, .. } if content == "after"
+        ));
+    }
+
+    #[test]
+    fn anthropic_tool_result_contains_payload_and_error_flag() {
+        let result = MessageType::ToolCallResult(ToolCallResult {
+            id: "call_1".into(),
+            result: ToolCallResultInner::Error {
+                error: "failed".into(),
+            },
+        });
+
+        let encoded = serde_json::to_value(to_anthropic_message(&result)).unwrap();
+        assert_eq!(encoded["content"][0]["tool_use_id"], "call_1");
+        assert_eq!(encoded["content"][0]["is_error"], true);
+        assert_eq!(encoded["content"][0]["content"][0]["text"], "failed");
     }
 }

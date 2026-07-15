@@ -66,6 +66,8 @@ pub(crate) struct ToolUseBlockParam {
 pub(crate) struct ToolResultBlockParam {
     pub(crate) tool_use_id: String,
     pub(crate) content: Vec<ContentBlock>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) is_error: Option<bool>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ThinkingConfigParam {

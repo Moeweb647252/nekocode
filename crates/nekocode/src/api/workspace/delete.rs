@@ -21,6 +21,16 @@ pub async fn delete_workspace(
             return Err(ApiError::ThreadGenerating);
         }
     }
+    // Stop processes and detached child runs before evicting their activated
+    // agents. This mirrors thread deletion; workspace deletion has the same
+    // ownership boundary for every thread it contains.
+    for t in &threads {
+        crate::api::thread::delete::abort_thread_background_tasks(
+            &state.active_threads,
+            t.id,
+        )
+        .await;
+    }
     let mut transaction = state.db.transaction().await?;
     for t in &threads {
         let turns = toasty::query!(Turn FILTER .thread_id == #(t.id))

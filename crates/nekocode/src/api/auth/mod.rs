@@ -121,6 +121,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auth_websocket_subprotocol_token_passes() {
+        let mut state = test_state(AuthenticationConfig::Password {
+            password: "pwd".into(),
+        })
+        .await;
+        let token = toasty::create!(Token {
+            token: uuid::Uuid::new_v4().to_string(),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1),
+        })
+        .exec(&mut state.db)
+        .await
+        .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::SEC_WEBSOCKET_PROTOCOL,
+            token.token.parse().unwrap(),
+        );
+
+        let result = auth_middleware_inner(state, &headers).await;
+        assert!(result.unwrap());
+    }
+
+    #[tokio::test]
     async fn auth_expired_token_fails() {
         let mut state = test_state(AuthenticationConfig::Password {
             password: "pwd".into(),

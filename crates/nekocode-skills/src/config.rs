@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SkillsConfig {
-    /// Names of skills whose prompts should be injected into the system prompt.
+    /// Names of skills whose catalog entries are injected into the system
+    /// prompt. Full instructions are loaded on demand through `read_skill`.
     #[serde(default)]
     pub enabled: Vec<String>,
 }
