@@ -2,6 +2,8 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use tracing::error;
 
+/// Errors an API handler can surface. Maps to a JSON `{code, data, msg}`
+/// response body and an HTTP status (see [`ApiError::status_code`]).
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
     #[error("Database error: {0}")]
@@ -30,6 +32,8 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    /// Stable string slug for this error, emitted as the response `code`
+    /// field (e.g. `"unauthorized"`, `"item_not_found"`).
     pub fn code(&self) -> &'static str {
         match self {
             ApiError::DatabaseError(_) => "database_error",

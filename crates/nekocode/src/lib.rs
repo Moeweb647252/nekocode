@@ -1,8 +1,7 @@
 //! nekocode API server — library entry point.
 //!
 //! Provides the application state and router for integration tests.
-//! The [`main`] binary is a thin wrapper that reads config and starts
-//! the server.
+//! The main binary is a thin wrapper that reads config and starts the server.
 
 use std::sync::Arc;
 
@@ -15,6 +14,12 @@ mod api;
 
 pub use api::generate::{GenerateState, ThreadId};
 
+/// Server-wide shared state, cloned and injected into every axum route.
+///
+/// Holds the DB handle, the config behind a `RwLock`, and two
+/// `ThreadId`-keyed maps: live generation state (for stream replay/abort) and
+/// activated agents. Integration tests build it by hand together with
+/// [`build_router`].
 #[derive(Clone)]
 pub struct AppState {
     pub db: toasty::Db,

@@ -33,8 +33,13 @@ pub fn protected_router() -> Router<AppState> {
         .nest("/util", util::router())
 }
 
+/// Standard `Result` alias for API handlers: `ApiResponse` on success,
+/// [`ApiError`] on failure.
 pub type ApiResult = Result<ApiResponse, ApiError>;
 
+/// The uniform JSON response body for every API endpoint:
+/// `{ code: "ok", data, msg }`. `code` is a stable string; `data` is the
+/// payload; `msg` carries an optional message.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiResponse {
@@ -44,6 +49,7 @@ pub struct ApiResponse {
 }
 
 impl ApiResponse {
+    /// Wrap a serializable payload in a successful `ok` response.
     pub fn ok<T: Serialize>(data: T) -> Result<Self, ApiError> {
         Ok(Self {
             code: "ok".to_string(),
@@ -91,6 +97,10 @@ pub(crate) async fn auth_middleware_inner(
     }
 }
 
+/// axum middleware garding the protected router: validates the `Token`
+/// header against the DB (skipping the check entirely when auth is
+/// `AuthenticationConfig::None`) before forwarding the request. Returns
+/// `401 unauthorized` otherwise.
 pub async fn auth_middleware(
     State(state): State<AppState>,
     request: Request,
