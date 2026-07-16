@@ -171,18 +171,18 @@ impl Middleware for SubagentMiddleware {
     }
 
     async fn on_turn_end(&self) -> Result<(), anyhow::Error> {
-        // Parent turn is over: no subagent may outlive it. First cancel the
-        // shared `run_cancel` token — every descendant `run_subagent` across
-        // the whole spawn tree subscribes to it and bails at its next await,
-        // each driving its *own* middlewares' `on_turn_end` so grandchildren
-        // cascade down too (real recursion across depth, no reliance on the
-        // runtime re-poling one layer before the next). Then wait for direct
-        // children to complete their cooperative cleanup and clear the registry.
-        self.ctx
-            .run_cancel
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .cancel();
+        // Only the root owns the shared tree token. A nested child also runs
+        // this hook on normal completion; cancelling here unconditionally
+        // would abort its siblings and parent tree as a side effect.
+        if self.owns_run_cancel {
+            self.ctx
+                .run_cancel
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .cancel();
+        }
+        // Every node still owns its direct-child registry and must clean that
+        // up when its own turn ends.
         self.ctx.registry.abort_all_and_clear().await;
         Ok(())
     }

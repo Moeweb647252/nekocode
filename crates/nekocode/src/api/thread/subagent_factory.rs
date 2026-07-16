@@ -9,7 +9,6 @@ use nekocode_subagent::SubagentMiddlewareFactory;
 /// session map, file's thread_id is the synthetic subagent id).
 #[derive(Clone)]
 pub struct ApiSubagentMiddlewareFactory {
-    pub db: toasty::Db,
     pub skills_dir: std::path::PathBuf,
 }
 
@@ -18,7 +17,7 @@ impl SubagentMiddlewareFactory for ApiSubagentMiddlewareFactory {
     fn build(
         &self,
         spec: MiddlewareSpec,
-        subagent_id: u64,
+        _subagent_id: u64,
         extensions: Extensions,
     ) -> Box<dyn Middleware> {
         match spec.name.as_str() {
@@ -26,10 +25,8 @@ impl SubagentMiddlewareFactory for ApiSubagentMiddlewareFactory {
                 extensions.clone(),
                 nekocode_shell::config::ShellConfig::from_value(&spec.config),
             )),
-            "tool" => Box::new(nekocode_file::ToolMiddleware::new(
+            "tool" => Box::new(nekocode_file::ToolMiddleware::for_ephemeral_agent(
                 nekocode_file::config::FileConfig::from_value(&spec.config),
-                self.db.clone(),
-                subagent_id,
             )),
             "mcp" => Box::new(nekocode_mcp::McpMiddleware::new(
                 nekocode_mcp::config::McpConfig::from_value(&spec.config),

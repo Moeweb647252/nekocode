@@ -15,8 +15,12 @@ pub mod tool;
 /// injected when the thread is activated.
 pub struct ToolMiddleware {
     pub config: Arc<config::FileConfig>,
-    pub db: toasty::Db,
-    pub thread_id: u64,
+    title_context: Option<ThreadTitleContext>,
+}
+
+struct ThreadTitleContext {
+    db: toasty::Db,
+    thread_id: u64,
 }
 
 impl ToolMiddleware {
@@ -26,8 +30,16 @@ impl ToolMiddleware {
     pub fn new(config: config::FileConfig, db: toasty::Db, thread_id: u64) -> Self {
         Self {
             config: Arc::new(config),
-            db,
-            thread_id,
+            title_context: Some(ThreadTitleContext { db, thread_id }),
+        }
+    }
+
+    /// Construct file-only tools for an ephemeral subagent. Such agents have
+    /// no persisted thread row, so exposing `set_title` would be misleading.
+    pub fn for_ephemeral_agent(config: config::FileConfig) -> Self {
+        Self {
+            config: Arc::new(config),
+            title_context: None,
         }
     }
 }
@@ -58,13 +70,15 @@ impl Middleware for ToolMiddleware {
                 config: self.config.clone(),
             }),
         );
-        registry.insert(
-            "set_title".into(),
-            Arc::new(tool::SetTitleTool {
-                db: self.db.clone(),
-                thread_id: self.thread_id,
-            }),
-        );
+        if let Some(context) = &self.title_context {
+            registry.insert(
+                "set_title".into(),
+                Arc::new(tool::SetTitleTool {
+                    db: context.db.clone(),
+                    thread_id: context.thread_id,
+                }),
+            );
+        }
         Ok(())
     }
 }

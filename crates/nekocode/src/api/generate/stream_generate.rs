@@ -107,19 +107,21 @@ async fn run_registered_generation(
             .await
     });
 
-    let mut interrupted = false;
+    let mut cancelled = false;
+    // The initiating socket is only one subscriber. A closed browser tab or a
+    // transient network failure must not abort work that a `/watch` client can
+    // resume observing, so detach it while the agent keeps running.
+    let mut socket_connected = true;
     loop {
         tokio::select! {
             _ = cancellation.cancelled() => {
-                interrupted = true;
+                cancelled = true;
                 break;
             }
-            incoming = socket.recv() => {
+            incoming = socket.recv(), if socket_connected => {
                 match incoming {
                     None | Some(Ok(ws::Message::Close(_))) | Some(Err(_)) => {
-                        cancellation.cancel();
-                        interrupted = true;
-                        break;
+                        socket_connected = false;
                     }
                     Some(Ok(_)) => {}
                 }
@@ -132,15 +134,15 @@ async fn run_registered_generation(
                 let payload = match serde_json::to_string(&WebSocketEvent::Delta(event)) {
                     Ok(payload) => payload,
                     Err(e) => {
-                        cancellation.cancel();
-                        let _ = handle.await;
-                        return error_stop(format!("error serializing stream event: {e}"));
+                        tracing::error!("error serializing stream event: {e}");
+                        socket_connected = false;
+                        continue;
                     }
                 };
-                if socket.send(ws::Message::Text(payload.into())).await.is_err() {
-                    cancellation.cancel();
-                    interrupted = true;
-                    break;
+                if socket_connected
+                    && socket.send(ws::Message::Text(payload.into())).await.is_err()
+                {
+                    socket_connected = false;
                 }
             }
         }
@@ -151,25 +153,37 @@ async fn run_registered_generation(
         Err(e) => return error_stop(e.to_string()),
     };
 
-    if interrupted {
-        return StopReason {
-            reason: Reason::Interrupted,
-            detail: serde_json::Value::Null,
-        };
-    }
-
     match run_result {
         Ok(turn) => {
             let usage = turn.usage.clone();
             if let Err(e) = turn_io::persist_turn(&state.db, thread_id, turn).await {
                 return error_stop(format!("error persisting turn {thread_id}: {e}"));
             }
-            StopReason {
-                reason: Reason::Finished,
-                detail: serde_json::to_value(usage).unwrap_or(serde_json::Value::Null),
+            if cancelled {
+                StopReason {
+                    reason: Reason::Interrupted,
+                    detail: serde_json::Value::Null,
+                }
+            } else {
+                StopReason {
+                    reason: Reason::Finished,
+                    detail: serde_json::to_value(usage).unwrap_or(serde_json::Value::Null),
+                }
             }
         }
-        Err(_partial) => error_stop("agent run failed"),
+        Err(partial) => {
+            if let Err(e) = turn_io::persist_turn(&state.db, thread_id, partial).await {
+                return error_stop(format!("error persisting partial turn {thread_id}: {e}"));
+            }
+            if cancelled {
+                StopReason {
+                    reason: Reason::Interrupted,
+                    detail: serde_json::Value::Null,
+                }
+            } else {
+                error_stop("agent run failed")
+            }
+        }
     }
 }
 

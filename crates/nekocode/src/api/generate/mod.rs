@@ -1,3 +1,4 @@
+mod cancel;
 mod stream_generate;
 pub(super) mod turn_io;
 mod watch_stream;
@@ -111,6 +112,7 @@ pub fn router() -> axum::Router<AppState> {
             "/watch/{thread_id}",
             axum::routing::any(watch_stream::watch_stream),
         )
+        .route("/cancel", axum::routing::post(cancel::cancel_generation))
 }
 
 #[cfg(test)]

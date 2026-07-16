@@ -42,12 +42,15 @@ export function streamGenerate(
  * Open a WebSocket to watch an already-running generation.
  * Returns a cleanup function to close the socket.
  */
-export function watchStream(
-  threadId: number,
-  callbacks: GenerateCallbacks,
-): () => void {
+export function watchStream(threadId: number, callbacks: GenerateCallbacks): () => void {
   const url = wsUrl(`/watch/${threadId}`)
   return connectStream(url, callbacks)
+}
+
+export async function cancelGeneration(threadId: number): Promise<void> {
+  const { post } = await import('./client')
+  const resp = await post<null>('/generate/cancel', { threadId })
+  if (resp.code !== 'ok') throw new Error(resp.msg ?? 'Failed to cancel generation')
 }
 
 // ── Internal ──

@@ -55,8 +55,10 @@ pub(crate) async fn build_middlewares(
     middleware_rows: &[nekocode_entities::middleware::Middleware],
 ) -> Vec<Box<dyn nekocode_core::middleware::Middleware>> {
     let mut middlewares: Vec<Box<dyn nekocode_core::middleware::Middleware>> = Vec::new();
+    let mut rows = middleware_rows.to_vec();
+    rows.sort_by_key(|row| (row.order_index, row.id));
 
-    for i in middleware_rows {
+    for i in &rows {
         // Skip disabled middlewares — they stay persisted but aren't built
         // into the agent.
         if !i.enabled {
@@ -109,7 +111,7 @@ pub(crate) async fn build_middlewares(
                 // excluding "subagent" itself (prevents recursive self-
                 // registration; nesting is governed by depth+max_depth, not
                 // by omission here).
-                let specs: Vec<nekocode_core::middleware::MiddlewareSpec> = middleware_rows
+                let specs: Vec<nekocode_core::middleware::MiddlewareSpec> = rows
                     .iter()
                     .filter(|r| r.enabled && r.name != "subagent")
                     .map(|r| nekocode_core::middleware::MiddlewareSpec {
@@ -123,7 +125,6 @@ pub(crate) async fn build_middlewares(
                 };
                 let factory = std::sync::Arc::new(
                     crate::api::thread::subagent_factory::ApiSubagentMiddlewareFactory {
-                        db: ctx.db.clone(),
                         skills_dir,
                     },
                 );

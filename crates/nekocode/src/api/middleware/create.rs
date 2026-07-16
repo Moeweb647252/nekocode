@@ -37,8 +37,16 @@ pub async fn create_middleware(
         return Err(ApiError::ThreadGenerating);
     }
 
+    let next_order_index = toasty::query!(Middleware FILTER .thread_id == #(payload.thread_id) ORDER BY .order_index DESC LIMIT 1)
+        .first()
+        .exec(&mut state.db)
+        .await?
+        .map(|middleware| middleware.order_index.saturating_add(100))
+        .unwrap_or(100);
+
     let created = toasty::create!(Middleware {
         thread_id: payload.thread_id,
+        order_index: next_order_index,
         name: payload.name,
         config: toasty::Json(payload.config),
     })

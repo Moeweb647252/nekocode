@@ -122,6 +122,11 @@ impl Agent {
                         ) => result?,
                     }
                 }
+                if let Some(name) = tool_registry.conflicts().first() {
+                    return Err(AgentError::Other(anyhow::anyhow!(
+                        "duplicate tool registered: {name}"
+                    )));
+                }
                 request.tool_specs = tool_registry.specs();
                 let system_prompt = request.system_prompt.clone();
                 let tool_specs = request.tool_specs.clone();

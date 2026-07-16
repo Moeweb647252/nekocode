@@ -1,26 +1,28 @@
 <script setup lang="ts">
-import type { AgentEvent, ChatMessage, ThreadResponse, Thread } from "@/api/types.ts";
-import InputArea from "./InputArea.vue";
-import MessageBox from "./MessageBox.vue";
-import ThreadSettingsDialog from "./ThreadSettingsDialog.vue";
-import { activateThread, getThread } from "@/api/thread.ts";
-import { streamGenerate } from "@/api/generate.ts";
-import { useDialog } from 'primevue';
-import { useToast } from 'primevue/usetoast';
+import type { AgentEvent, ChatMessage, ThreadResponse, Thread } from '@/api/types.ts'
+import InputArea from './InputArea.vue'
+import MessageBox from './MessageBox.vue'
+import ThreadSettingsDialog from './ThreadSettingsDialog.vue'
+import { activateThread, getThread } from '@/api/thread.ts'
+import { streamGenerate, watchStream } from '@/api/generate.ts'
+import { cancelGeneration } from '@/api/generate.ts'
+import type { GenerateCallbacks } from '@/api/generate.ts'
+import { useDialog } from 'primevue'
+import { useToast } from 'primevue/usetoast'
 
-const dialog = useDialog();
-const toast = useToast();
+const dialog = useDialog()
+const toast = useToast()
 
-const selectedThread = inject<Ref<Thread>>("selectedThread");
-const thread = ref<ThreadResponse | null>(null);
-const streamingMessages = ref<ChatMessage[]>([]);
+const selectedThread = inject<Ref<Thread>>('selectedThread')
+const thread = ref<ThreadResponse | null>(null)
+const streamingMessages = ref<ChatMessage[]>([])
 const messages = computed(() => {
   const dbMessages =
-    thread.value?.turns.flatMap((t) => t.messages?.map((m) => m.content) ?? []) ?? [];
-  return [...dbMessages, ...streamingMessages.value];
-});
-const userInput = ref("");
-const sending = ref(false);
+    thread.value?.turns.flatMap((t) => t.messages?.map((m) => m.content) ?? []) ?? []
+  return [...dbMessages, ...streamingMessages.value]
+})
+const userInput = ref('')
+const sending = ref(false)
 
 // Prefer the loaded detail, which is refreshed after a settings change; the
 // sidebar summary remains a fallback while the detail request is in flight.
@@ -38,134 +40,153 @@ const displayWorkdir = computed(() => {
 // Track whether this component instance is still mounted so async callbacks
 // from getThread/activateThread don't write into stale state after the user
 // switches threads (the parent remounts via :key).
-let alive = true;
+let alive = true
 // Cleanup function for the in-flight WebSocket; invoked on unmount so the
 // socket (and its onDelta closures) don't outlive this component.
-let closeStream: (() => void) | null = null;
+let closeStream: (() => void) | null = null
+let currentAssistantMsg: ChatMessage | null = null
 
 onMounted(async () => {
-  const id = selectedThread?.value?.id;
-  if (id == null) return;
+  const id = selectedThread?.value?.id
+  if (id == null) return
   try {
-    const got = await getThread(id, 10);
-    if (!alive) return; // user switched threads while loading
-    thread.value = got;
-    if (!got.active) await activateThread(got.id);
+    const got = await getThread(id, 10)
+    if (!alive) return // user switched threads while loading
+    thread.value = got
+    if (!got.active) await activateThread(got.id)
+    if (got.generating) {
+      sending.value = true
+      closeStream = watchStream(got.id, streamCallbacks(got.id))
+    }
   } catch (e) {
-    console.error("Failed to load thread:", e);
-    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to load thread', life: 5000 });
+    console.error('Failed to load thread:', e)
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to load thread', life: 5000 })
   }
-});
+})
 
 onBeforeUnmount(() => {
-  alive = false;
-  closeStream?.();
-  closeStream = null;
-});
+  alive = false
+  closeStream?.()
+  closeStream = null
+})
 
 const sendMessage = async () => {
-  const id = thread.value?.id;
-  if (id == null) return;
-  const input = userInput.value.trim();
-  if (!input || sending.value) return;
-  sending.value = true;
-  userInput.value = "";
+  const id = thread.value?.id
+  if (id == null) return
+  const input = userInput.value.trim()
+  if (!input || sending.value) return
+  sending.value = true
+  userInput.value = ''
 
   // Append the user message (don't wipe prior streaming state).
-  streamingMessages.value.push({ type: "user", data: { type: "text", content: input } });
+  streamingMessages.value.push({ type: 'user', data: { type: 'text', content: input } })
 
   // The assistant message currently being built (a direct reference into the
   // streaming array so deltas mutate the same reactive object).
-  let currentAssistantMsg: ChatMessage | null = null;
+  closeStream?.()
+  closeStream = streamGenerate(id, input, streamCallbacks(id))
+}
 
-  closeStream?.();
-  closeStream = streamGenerate(id, input, {
+function streamCallbacks(id: number): GenerateCallbacks {
+  return {
     onDelta: (event: AgentEvent) => {
-      if (!alive) return;
-      const se = event.data;
-      if (se.type !== "streamEvent") return;
-      const d = se.data;
+      if (!alive) return
+      const se = event.data
+      if (se.type !== 'streamEvent') return
+      const d = se.data
 
       switch (d.type) {
-        case "messageStart": {
+        case 'messageStart': {
           const newMsg: ChatMessage = {
-            type: "assistant",
+            type: 'assistant',
             data: { blocks: reactive([]) },
-          };
-          streamingMessages.value.push(newMsg);
-          currentAssistantMsg = newMsg;
-          break;
-        }
-        case "content": {
-          if (!currentAssistantMsg) return;
-          if (currentAssistantMsg.type !== "assistant") return;
-          const blocks = currentAssistantMsg.data.blocks;
-          let lastBlock = blocks[blocks.length - 1];
-          if (!lastBlock || lastBlock.type !== "text") {
-            lastBlock = { type: "text", content: "", reasoningContent: null };
-            blocks.push(lastBlock);
           }
-          lastBlock.content += d.data;
-          break;
+          streamingMessages.value.push(newMsg)
+          currentAssistantMsg = newMsg
+          break
         }
-        case "reasoningContent": {
-          if (!currentAssistantMsg) return;
-          if (currentAssistantMsg.type !== "assistant") return;
-          const blocks = currentAssistantMsg.data.blocks;
-          let lastBlock = blocks[blocks.length - 1];
-          if (!lastBlock || lastBlock.type !== "text") {
-            lastBlock = { type: "text", content: "", reasoningContent: null };
-            blocks.push(lastBlock);
+        case 'content': {
+          if (!currentAssistantMsg) return
+          if (currentAssistantMsg.type !== 'assistant') return
+          const blocks = currentAssistantMsg.data.blocks
+          let lastBlock = blocks[blocks.length - 1]
+          if (!lastBlock || lastBlock.type !== 'text') {
+            lastBlock = { type: 'text', content: '', reasoningContent: null }
+            blocks.push(lastBlock)
           }
-          lastBlock.reasoningContent = (lastBlock.reasoningContent ?? "") + d.data;
-          break;
+          lastBlock.content += d.data
+          break
         }
-        case "toolCall": {
-          if (!currentAssistantMsg) return;
-          if (currentAssistantMsg.type !== "assistant") return;
+        case 'reasoningContent': {
+          if (!currentAssistantMsg) return
+          if (currentAssistantMsg.type !== 'assistant') return
+          const blocks = currentAssistantMsg.data.blocks
+          let lastBlock = blocks[blocks.length - 1]
+          if (!lastBlock || lastBlock.type !== 'text') {
+            lastBlock = { type: 'text', content: '', reasoningContent: null }
+            blocks.push(lastBlock)
+          }
+          lastBlock.reasoningContent = (lastBlock.reasoningContent ?? '') + d.data
+          break
+        }
+        case 'toolCall': {
+          if (!currentAssistantMsg) return
+          if (currentAssistantMsg.type !== 'assistant') return
           currentAssistantMsg.data.blocks.push({
-            type: "toolCall",
+            type: 'toolCall',
             ...d.data,
-          });
-          break;
+          })
+          break
         }
-        case "toolCallResult": {
+        case 'toolCallResult': {
           streamingMessages.value.push({
-            type: "toolCallResult",
+            type: 'toolCallResult',
             data: d.data,
-          });
-          break;
+          })
+          break
         }
-        case "messageEnd": {
+        case 'messageEnd': {
           // Closes the current assistant bubble only; the turn may continue
           // with another tool round. TurnEnd is what ends the whole turn.
-          currentAssistantMsg = null;
-          break;
+          currentAssistantMsg = null
+          break
         }
-        case "turnEnd": {
+        case 'turnEnd': {
           // The agent finished the whole turn (all tool rounds done).
           // Release the sending state; the trailing ws Stop frame will
           // arrive next as a backstop for the interrupted/error paths.
-          currentAssistantMsg = null;
-          sending.value = false;
-          break;
+          currentAssistantMsg = null
+          sending.value = false
+          break
         }
       }
     },
     onStop: () => {
-      sending.value = false;
+      sending.value = false
+      getThread(id)
+        .then((fresh) => {
+          if (!alive) return
+          thread.value = fresh
+          streamingMessages.value = []
+        })
+        .catch((e) => console.error('Failed to refresh completed turn:', e))
     },
     onError: (err) => {
-      sending.value = false;
-      console.error(err);
-      toast.add({ severity: 'error', summary: 'Connection Error', detail: 'Lost connection to the server', life: 8000 });
+      sending.value = false
+      console.error(err)
+      toast.add({
+        severity: 'error',
+        summary: 'Connection Error',
+        detail: 'Lost connection to the server',
+        life: 8000,
+      })
     },
-  });
-};
+  }
+}
 
 const openSettings = () => {
-  const id = thread.value?.id;
-  if (id == null) return;
+  const id = thread.value?.id
+  if (id == null) return
   dialog.open(ThreadSettingsDialog, {
     props: {
       header: 'Thread Settings',
@@ -175,13 +196,32 @@ const openSettings = () => {
     onClose: (changed: unknown) => {
       if (changed === true) {
         // Reload thread to refresh title/model in the sub-header.
-        getThread(id).then(t => { if (alive) thread.value = t; }).catch((e) => {
-          console.error(e);
-          toast.add({ severity: 'warn', summary: 'Warning', detail: 'Failed to refresh thread', life: 3000 });
-        });
+        getThread(id)
+          .then((t) => {
+            if (alive) thread.value = t
+          })
+          .catch((e) => {
+            console.error(e)
+            toast.add({
+              severity: 'warn',
+              summary: 'Warning',
+              detail: 'Failed to refresh thread',
+              life: 3000,
+            })
+          })
       }
     },
-  });
+  })
+}
+
+const stopGeneration = async () => {
+  const id = thread.value?.id
+  if (id == null || !sending.value) return
+  try {
+    await cancelGeneration(id)
+  } catch (e) {
+    console.error('Failed to cancel generation:', e)
+  }
 }
 </script>
 <template>
@@ -192,13 +232,8 @@ const openSettings = () => {
       style="border-color: var(--app-border); background: var(--app-surface)"
     >
       <i class="pi pi-folder text-sm" style="color: var(--p-primary-500)" />
-      <span class="text-sm font-mono truncate" :title="displayWorkdir">{{
-        displayWorkdir
-      }}</span>
-      <span
-        v-if="thread?.title"
-        class="text-xs truncate"
-        style="color: var(--app-text-muted)"
+      <span class="text-sm font-mono truncate" :title="displayWorkdir">{{ displayWorkdir }}</span>
+      <span v-if="thread?.title" class="text-xs truncate" style="color: var(--app-text-muted)"
         >— {{ thread.title }}</span
       >
       <span
@@ -230,6 +265,7 @@ const openSettings = () => {
       v-model:value="userInput"
       :disabled="sending"
       @sendClicked="sendMessage"
+      @cancelClicked="stopGeneration"
       @settingsClicked="openSettings"
     ></InputArea>
   </div>

@@ -21,12 +21,13 @@ pub async fn create_thread(
     let workspace =
         nekocode_entities::workspace::find_or_create(&mut state.db, &payload.working_directory)
             .await?;
+    let mut transaction = state.db.transaction().await?;
     let thread = toasty::create!(Thread {
         working_directory: payload.working_directory.clone(),
         model: model,
         workspace_id: Some(workspace.id),
     })
-    .exec(&mut state.db)
+    .exec(&mut transaction)
     .await?;
     // Seed both middlewares with the thread's working directory. It is the
     // initial cwd for shell commands and the enforced root for file tools;
@@ -38,10 +39,11 @@ pub async fn create_thread(
     .to_value();
     toasty::create!(Middleware {
         thread_id: thread.id,
+        order_index: 100,
         name: "shell".to_string(),
         config: toasty::Json(shell_cfg),
     })
-    .exec(&mut state.db)
+    .exec(&mut transaction)
     .await?;
     let tool_cfg = nekocode_file::config::FileConfig {
         working_directory: Some(payload.working_directory),
@@ -49,10 +51,12 @@ pub async fn create_thread(
     .to_value();
     toasty::create!(Middleware {
         thread_id: thread.id,
+        order_index: 200,
         name: "tool".to_string(),
         config: toasty::Json(tool_cfg),
     })
-    .exec(&mut state.db)
+    .exec(&mut transaction)
     .await?;
+    transaction.commit().await?;
     ApiResponse::ok(thread)
 }

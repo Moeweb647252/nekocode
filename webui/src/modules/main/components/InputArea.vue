@@ -4,7 +4,7 @@ const input = defineModel('value', {
   type: String,
   required: true,
 })
-const emit = defineEmits(['sendClicked', 'settingsClicked'])
+const emit = defineEmits(['sendClicked', 'settingsClicked', 'cancelClicked'])
 
 const ta = ref<HTMLTextAreaElement | null>(null)
 
@@ -46,6 +46,17 @@ const canSend = computed(() => !props.disabled && (input.value ?? '').trim().len
           @keydown="onKeydown"
         ></textarea>
         <button
+          v-if="disabled"
+          type="button"
+          class="send-btn cancel-btn"
+          title="Stop generation"
+          aria-label="Stop generation"
+          @click="emit('cancelClicked')"
+        >
+          <i class="pi pi-stop"></i>
+        </button>
+        <button
+          v-else
           type="button"
           class="icon-btn"
           title="Thread settings"

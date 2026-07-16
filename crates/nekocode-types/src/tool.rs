@@ -94,6 +94,7 @@ pub trait Tool {
 #[derive(Default)]
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool + Send + Sync>>,
+    conflicts: Vec<String>,
 }
 
 impl ToolRegistry {
@@ -101,8 +102,19 @@ impl ToolRegistry {
         Self::default()
     }
 
-    pub fn insert(&mut self, name: String, tool: Arc<dyn Tool + Send + Sync>) {
+    /// Register one tool name exactly once for a generation. Silent overwrite
+    /// would make the model's declared tool contract depend on middleware order.
+    pub fn insert(&mut self, name: String, tool: Arc<dyn Tool + Send + Sync>) -> bool {
+        if self.tools.contains_key(&name) {
+            self.conflicts.push(name);
+            return false;
+        }
         self.tools.insert(name, tool);
+        true
+    }
+
+    pub fn conflicts(&self) -> &[String] {
+        &self.conflicts
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool + Send + Sync>> {
@@ -110,7 +122,9 @@ impl ToolRegistry {
     }
 
     pub fn specs(&self) -> Vec<ToolSpec> {
-        self.tools.values().map(|tool| tool.spec()).collect()
+        let mut specs: Vec<_> = self.tools.values().map(|tool| tool.spec()).collect();
+        specs.sort_by(|a, b| a.name.cmp(&b.name));
+        specs
     }
 }
 

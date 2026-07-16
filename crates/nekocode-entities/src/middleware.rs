@@ -16,6 +16,11 @@ pub struct Middleware {
     pub id: u64,
     #[index]
     pub thread_id: u64,
+    /// Explicit composition order. Ties are resolved by id for rows created
+    /// before this field existed, so activation is deterministic after schema
+    /// migration as well.
+    #[default(0)]
+    pub order_index: u64,
     pub name: String,
     pub config: Json<serde_json::Value>,
     /// Whether this middleware is active for its thread. Shell and Tool are

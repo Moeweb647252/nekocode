@@ -168,6 +168,7 @@ impl Tool for SpawnSubthreadTool {
         let shell_cfg = nekocode_shell_config_value(&working_directory);
         toasty::create!(Middleware {
             thread_id: subthread.id,
+            order_index: 100,
             name: "shell".to_string(),
             config: Json(shell_cfg),
         })
@@ -178,6 +179,7 @@ impl Tool for SpawnSubthreadTool {
         let tool_cfg = nekocode_file_config_value(&working_directory);
         toasty::create!(Middleware {
             thread_id: subthread.id,
+            order_index: 200,
             name: "tool".to_string(),
             config: Json(tool_cfg),
         })
@@ -195,6 +197,7 @@ impl Tool for SpawnSubthreadTool {
             .to_value();
             toasty::create!(Middleware {
                 thread_id: subthread.id,
+                order_index: 300,
                 name: "subthread".to_string(),
                 config: Json(sub_cfg),
             })
