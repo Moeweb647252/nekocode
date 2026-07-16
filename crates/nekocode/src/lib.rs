@@ -26,6 +26,10 @@ pub struct AppState {
     pub config: Arc<RwLock<Config>>,
     pub generate_states: Arc<dashmap::DashMap<ThreadId, Arc<GenerateState>>>,
     pub active_threads: Arc<dashmap::DashMap<ThreadId, Arc<RwLock<Agent>>>>,
+    /// Serializes run reservation with destructive/configuration operations.
+    /// The lock is held only while establishing or tearing down a thread-level
+    /// invariant; provider generation itself never holds it.
+    pub thread_lifecycle: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Build an axum [`Router`] with all API routes mounted under `/api`.
@@ -33,13 +37,9 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .nest(
             "/api",
-            api::public_router().merge(
-                api::protected_router()
-                    .layer(axum::middleware::from_fn_with_state(
-                        state.clone(),
-                        api::auth_middleware,
-                    )),
-            ),
+            api::public_router().merge(api::protected_router().layer(
+                axum::middleware::from_fn_with_state(state.clone(), api::auth_middleware),
+            )),
         )
         .with_state(state)
 }

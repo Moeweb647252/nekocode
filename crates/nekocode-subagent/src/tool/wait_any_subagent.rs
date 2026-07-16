@@ -2,8 +2,10 @@ use std::time::Duration;
 
 use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 
-use crate::tool::{notify_any, parse_agent_ids, parse_timeout, run_state_name};
 use crate::SubagentContext;
+use crate::tool::{
+    notification_futures, notify_any, parse_agent_ids, parse_timeout, run_state_name,
+};
 
 /// The `wait_any_subagent` tool: blocks until any one of the listed subagents
 /// reaches a terminal state (returning that one) or the timeout elapses
@@ -51,6 +53,8 @@ impl Tool for WaitAnySubagentTool {
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(timeout_secs);
         loop {
+            let notifications =
+                notification_futures(ids.iter().filter_map(|id| self.ctx.registry.notify(*id)));
             for id in &ids {
                 let state = self.ctx.registry.run_state(*id);
                 if state.is_ready() {
@@ -68,18 +72,14 @@ impl Tool for WaitAnySubagentTool {
                     "pending": ids,
                 }));
             }
-            let notifies: Vec<_> = ids
-                .iter()
-                .filter_map(|id| self.ctx.registry.notify(*id))
-                .collect();
             let sleep = tokio::time::sleep_until(deadline);
             tokio::pin!(sleep);
-            if notifies.is_empty() {
+            if notifications.is_empty() {
                 (&mut sleep).await;
             } else {
                 tokio::select! {
                     _ = sleep => {}
-                    _ = notify_any(&notifies) => {}
+                    _ = notify_any(notifications) => {}
                 }
             }
         }

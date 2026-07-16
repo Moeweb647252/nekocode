@@ -18,7 +18,20 @@ pub struct ThreadResponse {
     pub created_at: jiff::Timestamp,
     pub active: bool,
     pub generating: bool,
-    pub turns: Vec<Turn>,
+    pub turns: Vec<TurnResponse>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnResponse {
+    pub id: u64,
+    pub thread_id: u64,
+    pub turn_index: u64,
+    pub usage: nekocode_types::generate::Usage,
+    pub finished: bool,
+    pub updated_at: jiff::Timestamp,
+    pub created_at: jiff::Timestamp,
+    pub messages: Vec<Message>,
 }
 
 pub async fn get_thread(
@@ -35,7 +48,6 @@ pub async fn get_thread(
             // client transcript. `ASC LIMIT` would permanently hide recent
             // messages once a thread grew past the requested page size.
             let mut turns = toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .id DESC LIMIT #limit)
-                .include(Turn::fields().messages())
                 .exec(&mut state.db)
                 .await?;
             turns.reverse();
@@ -44,10 +56,10 @@ pub async fn get_thread(
             // No limit requested: return only the latest turn (DESC + LIMIT 1).
             // Previously this was `ASC LIMIT 1`, which returned the *oldest* turn.
             toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .id DESC LIMIT 1)
-                .include(Turn::fields().messages())
                 .exec(&mut state.db)
                 .await?
         };
+        let turns = materialize_turns(&mut state.db, turns).await?;
         ApiResponse::ok(ThreadResponse {
             id: thread.id,
             title: thread.title,
@@ -65,4 +77,28 @@ pub async fn get_thread(
             payload.id
         )))
     }
+}
+
+async fn materialize_turns(
+    db: &mut toasty::Db,
+    turns: Vec<Turn>,
+) -> Result<Vec<TurnResponse>, ApiError> {
+    let mut out = Vec::with_capacity(turns.len());
+    for turn in turns {
+        let messages =
+            toasty::query!(Message FILTER .turn_id == #(turn.id) ORDER BY .message_index ASC)
+                .exec(db)
+                .await?;
+        out.push(TurnResponse {
+            id: turn.id,
+            thread_id: turn.thread_id,
+            turn_index: turn.turn_index,
+            usage: turn.usage.0,
+            finished: turn.finished,
+            updated_at: turn.updated_at,
+            created_at: turn.created_at,
+            messages,
+        });
+    }
+    Ok(out)
 }

@@ -36,6 +36,15 @@ pub(crate) struct MiddlewareBuildContext {
     pub provider: Arc<dyn nekocode_core::provider::Provider>,
 }
 
+pub(crate) async fn shutdown_and_remove_agent(
+    active_threads: &dashmap::DashMap<u64, Arc<tokio::sync::RwLock<nekocode_core::agent::Agent>>>,
+    thread_id: u64,
+) {
+    if let Some((_, agent)) = active_threads.remove(&thread_id) {
+        agent.read().await.shutdown().await;
+    }
+}
+
 /// Build the middleware chain from a thread's persisted middleware rows.
 /// The `ctx` parameter carries all the state needed to construct each
 /// middleware. The caller is responsible for providing the correct
@@ -126,12 +135,12 @@ pub(crate) async fn build_middlewares(
                     ctx.db.clone(),
                     ctx.working_directory.clone(),
                     cfg,
-                    0,    // depth = 0 for the top-level parent
+                    0, // depth = 0 for the top-level parent
                     true, // allow_nested = true at the root: the top-level
-                          // thread is not itself a subagent, so it is always
-                          // permitted to spawn its first-level subagents.
-                          // The depth gate + each child's own profile
-                          // allow_nested bound further nesting.
+                       // thread is not itself a subagent, so it is always
+                       // permitted to spawn its first-level subagents.
+                       // The depth gate + each child's own profile
+                       // allow_nested bound further nesting.
                 )));
             }
             _ => {

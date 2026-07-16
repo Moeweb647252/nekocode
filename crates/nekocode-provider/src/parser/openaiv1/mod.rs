@@ -10,8 +10,8 @@ use nekocode_core::provider::{ProviderError, ProviderEvent};
 use nekocode_types::generate::Usage;
 use nekocode_types::{generate::StopReason, tool::ToolCall};
 use types::{
-    ChatCompletionStreamResponse, ChatCompletionStreamUsage, FinishReason,
-    ChatCompletionStreamDeltaToolCall,
+    ChatCompletionStreamDeltaToolCall, ChatCompletionStreamResponse, ChatCompletionStreamUsage,
+    FinishReason,
 };
 
 struct PendingOpenAIToolCall {
@@ -127,9 +127,8 @@ impl OpenAIV1Stream {
                         return self.emit_termination(StopReason::Stop);
                     }
                     FinishReason::ContentFilter => {
-                        return self.emit_termination(StopReason::Error(
-                            "Content filtered".to_string(),
-                        ));
+                        return self
+                            .emit_termination(StopReason::Error("Content filtered".to_string()));
                     }
                 }
             }

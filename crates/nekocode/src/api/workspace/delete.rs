@@ -12,6 +12,7 @@ pub async fn delete_workspace(
     State(mut state): State<AppState>,
     Json(payload): Json<DeleteWorkspace>,
 ) -> ApiResult {
+    let _lifecycle = state.thread_lifecycle.lock().await;
     let threads = toasty::query!(Thread FILTER .workspace_id == #(payload.id))
         .exec(&mut state.db)
         .await?;
@@ -25,11 +26,8 @@ pub async fn delete_workspace(
     // agents. This mirrors thread deletion; workspace deletion has the same
     // ownership boundary for every thread it contains.
     for t in &threads {
-        crate::api::thread::delete::abort_thread_background_tasks(
-            &state.active_threads,
-            t.id,
-        )
-        .await;
+        crate::api::thread::delete::abort_thread_background_tasks(&state.active_threads, t.id)
+            .await;
     }
     let mut transaction = state.db.transaction().await?;
     for t in &threads {

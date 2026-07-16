@@ -1,15 +1,11 @@
 use std::{
     collections::VecDeque,
-    sync::{
-        Arc,
-        Mutex,
-        atomic::AtomicU32,
-    },
+    sync::{Arc, Mutex, atomic::AtomicU32},
 };
 
 use nekocode_core::extensions::Extensions;
 use nekocode_core::middleware::Middleware;
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
 
 pub mod config;
@@ -47,6 +43,7 @@ pub struct ShellTaskState {
     pub input: mpsc::UnboundedSender<String>,
     pub cancellation_token: CancellationToken,
     pub is_running: Arc<std::sync::atomic::AtomicBool>,
+    pub done: Arc<Notify>,
 }
 
 /// State carrier for the shell tool middleware. Holds the shared map of
@@ -77,7 +74,8 @@ impl Shell {
 
     /// Allocate a fresh shell id.
     pub fn allocate_id(&self) -> u32 {
-        self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        self.next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -127,6 +125,31 @@ impl Middleware for Shell {
                 shell_states: self.shell_states.clone(),
             }),
         );
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> Result<(), anyhow::Error> {
+        let states: Vec<ShellTaskState> = self
+            .shell_states
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        for state in &states {
+            state.cancellation_token.cancel();
+        }
+        for state in states {
+            let wait = async {
+                loop {
+                    let notified = state.done.notified();
+                    if !state.is_running.load(std::sync::atomic::Ordering::SeqCst) {
+                        break;
+                    }
+                    notified.await;
+                }
+            };
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), wait).await;
+        }
+        self.shell_states.clear();
         Ok(())
     }
 }

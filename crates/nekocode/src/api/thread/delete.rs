@@ -19,6 +19,7 @@ pub async fn delete_thread(
         &state.db,
         &state.active_threads,
         &state.generate_states,
+        &state.thread_lifecycle,
         payload.id,
     )
     .await?;
@@ -41,8 +42,10 @@ pub async fn delete_threads_cascade(
     db: &toasty::Db,
     active_threads: &dashmap::DashMap<u64, Arc<tokio::sync::RwLock<nekocode_core::agent::Agent>>>,
     generate_states: &dashmap::DashMap<u64, Arc<crate::api::generate::GenerateState>>,
+    thread_lifecycle: &tokio::sync::Mutex<()>,
     root: u64,
 ) -> Result<(), ApiError> {
+    let _lifecycle = thread_lifecycle.lock().await;
     // Refuse to delete a thread that is mid-generation.
     if generate_states.contains_key(&root) {
         return Err(ApiError::ThreadGenerating);
@@ -71,12 +74,8 @@ pub async fn delete_threads_cascade(
         }
     }
 
-    // Abort any in-flight subthread and subagent background tasks owned by
-    // each thread in the set, then evict the thread itself from the caches.
-    // Iterate in reverse (children first) so a subthread's own sub-subthread
-    // tasks are aborted before the subthread itself. Subagent tasks are
-    // purely in-memory (no DB cascade), so abort_all_and_clear is the full
-    // cleanup.
+    // Permanently shut down middleware-owned processes/tasks, then evict each
+    // Agent. Iterate children first so nested ownership is released bottom-up.
     for id in to_delete.iter().rev() {
         abort_thread_background_tasks(active_threads, *id).await;
         active_threads.remove(id);
@@ -120,78 +119,10 @@ pub(crate) async fn abort_thread_background_tasks(
     active_threads: &dashmap::DashMap<u64, Arc<tokio::sync::RwLock<nekocode_core::agent::Agent>>>,
     thread_id: u64,
 ) {
-    abort_subthread_tasks(active_threads, thread_id).await;
-    abort_subagent_tasks(active_threads, thread_id).await;
-    abort_shell_tasks(active_threads, thread_id).await;
-}
-
-/// Read a thread's per-parent `SubthreadRegistry` from its activated `Agent`'s
-/// extensions (if any) and abort every in-flight subthread background task it
-/// owns. No-op when the thread isn't activated (it then has no in-flight
-/// subthread tasks to abort).
-async fn abort_subthread_tasks(
-    active_threads: &dashmap::DashMap<u64, Arc<tokio::sync::RwLock<nekocode_core::agent::Agent>>>,
-    thread_id: u64,
-) {
-    let registry: Option<Arc<nekocode_subthread::SubthreadRegistry>> =
-        if let Some(agent_entry) = active_threads.get(&thread_id) {
-            let agent = agent_entry.value().read().await;
-            agent.extensions.get::<nekocode_subthread::SubthreadRegistry>()
-        } else {
-            None
-        };
-
-    if let Some(registry) = registry {
-        // The thread is being deleted; abort every in-flight subthread task
-        // it owns and clear the registry. The registry itself will be dropped
-        // with the agent, but `abort_all_and_clear` releases task handles
-        // promptly so the runtime can reclaim them before we touch the DB.
-        let _aborted = registry.abort_all_and_clear();
-    }
-}
-
-/// Read a thread's per-parent `SubagentRegistry` from its activated `Agent`'s
-/// extensions (if any) and abort every in-flight subagent background task it
-/// owns. No-op when the thread isn't activated. No DB cascade — subagent
-/// state is purely in-memory.
-async fn abort_subagent_tasks(
-    active_threads: &dashmap::DashMap<u64, Arc<tokio::sync::RwLock<nekocode_core::agent::Agent>>>,
-    thread_id: u64,
-) {
-    let registry: Option<Arc<nekocode_subagent::SubagentRegistry>> =
-        if let Some(agent_entry) = active_threads.get(&thread_id) {
-            let agent = agent_entry.value().read().await;
-            agent.extensions.get::<nekocode_subagent::SubagentRegistry>()
-        } else {
-            None
-        };
-
-    if let Some(registry) = registry {
-        let _aborted = registry.abort_all_and_clear();
-    }
-}
-
-/// Cancel all long-running shells owned by an activated thread. Clearing the
-/// state map drops input senders; the supervisor observes the cancellation
-/// token and reaps each child process.
-async fn abort_shell_tasks(
-    active_threads: &dashmap::DashMap<u64, Arc<tokio::sync::RwLock<nekocode_core::agent::Agent>>>,
-    thread_id: u64,
-) {
-    let shell_states: Option<Arc<dashmap::DashMap<u32, nekocode_shell::ShellTaskState>>> =
-        if let Some(agent_entry) = active_threads.get(&thread_id) {
-            let agent = agent_entry.value().read().await;
-            agent
-                .extensions
-                .get::<dashmap::DashMap<u32, nekocode_shell::ShellTaskState>>()
-        } else {
-            None
-        };
-
-    if let Some(shell_states) = shell_states {
-        for state in shell_states.iter() {
-            state.cancellation_token.cancel();
-        }
-        shell_states.clear();
+    let agent = active_threads
+        .get(&thread_id)
+        .map(|entry| entry.value().clone());
+    if let Some(agent) = agent {
+        agent.read().await.shutdown().await;
     }
 }

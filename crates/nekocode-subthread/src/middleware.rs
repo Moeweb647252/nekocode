@@ -103,4 +103,9 @@ impl Middleware for SubthreadMiddleware {
         );
         Ok(())
     }
+
+    async fn shutdown(&self) -> Result<(), anyhow::Error> {
+        self.ctx.registry.abort_all_and_clear().await;
+        Ok(())
+    }
 }

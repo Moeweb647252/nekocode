@@ -34,7 +34,7 @@ pub struct SubagentContext {
     /// cancellation concurrently and bails — no reliance on the runtime
     /// re-poling one layer before the next. This is what makes the cascade
     /// "real recursion across depth" rather than best-effort.
-    pub run_cancel: tokio_util::sync::CancellationToken,
+    pub run_cancel: Arc<std::sync::RwLock<tokio_util::sync::CancellationToken>>,
 }
 
 /// The subagent middleware. Registered on a parent agent's middleware chain;
@@ -43,6 +43,7 @@ pub struct SubagentContext {
 /// slot `TypeId::of::<Arc<SubagentRegistry>>()`).
 pub struct SubagentMiddleware {
     ctx: SubagentContext,
+    owns_run_cancel: bool,
 }
 
 impl SubagentMiddleware {
@@ -67,11 +68,10 @@ impl SubagentMiddleware {
         let global_path = global_agents_toml_path();
         let workspace_path = workspace_agents_toml_path(&parent_working_directory);
         let catalog = Arc::new(
-            ProfileCatalog::load(&global_path, workspace_path.as_deref())
-                .unwrap_or_else(|e| {
-                    tracing::warn!("failed to load agents.toml: {e}; using empty catalog");
-                    ProfileCatalog::empty()
-                }),
+            ProfileCatalog::load(&global_path, workspace_path.as_deref()).unwrap_or_else(|e| {
+                tracing::warn!("failed to load agents.toml: {e}; using empty catalog");
+                ProfileCatalog::empty()
+            }),
         );
         parent_extensions.insert(registry.clone());
         let ctx = SubagentContext {
@@ -88,7 +88,9 @@ impl SubagentMiddleware {
             // The root creates the shared run-cancel flag; descendants clone
             // it (passed down via the child SubagentMiddleware's context) so
             // the whole tree subscribes to the same cancellation.
-            run_cancel: tokio_util::sync::CancellationToken::new(),
+            run_cancel: Arc::new(std::sync::RwLock::new(
+                tokio_util::sync::CancellationToken::new(),
+            )),
         };
         Self::from_context(ctx)
     }
@@ -97,7 +99,10 @@ impl SubagentMiddleware {
     /// build `SubagentContext` directly use this; `new` builds the ctx
     /// then delegates here).
     pub fn from_context(ctx: SubagentContext) -> Self {
-        Self { ctx }
+        Self {
+            ctx,
+            owns_run_cancel: true,
+        }
     }
 
     /// Replace this middleware's tree cancellation flag with `token`. Used by
@@ -107,13 +112,30 @@ impl SubagentMiddleware {
     /// (`new` mints its own fresh flag; at nested spawn we must re-point the
     /// child's flag at the inherited one.)
     pub fn with_run_cancel(mut self, token: tokio_util::sync::CancellationToken) -> Self {
-        self.ctx.run_cancel = token;
+        *self
+            .ctx
+            .run_cancel
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = token;
+        self.owns_run_cancel = false;
         self
     }
 }
 
 #[async_trait::async_trait]
 impl Middleware for SubagentMiddleware {
+    async fn on_turn_start(&self) -> Result<(), anyhow::Error> {
+        if self.owns_run_cancel {
+            *self
+                .ctx
+                .run_cancel
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                tokio_util::sync::CancellationToken::new();
+        }
+        Ok(())
+    }
+
     async fn before_generate(
         &self,
         _request: &mut nekocode_core::types::GenerateRequest,
@@ -125,11 +147,26 @@ impl Middleware for SubagentMiddleware {
             "spawn_subagent".into(),
             Arc::new(SpawnSubagentTool::new(ctx.clone(), mev_tx.clone())),
         );
-        registry.insert("inspect_subagent".into(), Arc::new(InspectSubagentTool::new(ctx.clone())));
-        registry.insert("read_subagent".into(), Arc::new(ReadSubagentTool::new(ctx.clone())));
-        registry.insert("wait_any_subagent".into(), Arc::new(WaitAnySubagentTool::new(ctx.clone())));
-        registry.insert("wait_all_subagents".into(), Arc::new(WaitAllSubagentsTool::new(ctx.clone())));
-        registry.insert("abort_subagent".into(), Arc::new(AbortSubagentTool::new(ctx.clone())));
+        registry.insert(
+            "inspect_subagent".into(),
+            Arc::new(InspectSubagentTool::new(ctx.clone())),
+        );
+        registry.insert(
+            "read_subagent".into(),
+            Arc::new(ReadSubagentTool::new(ctx.clone())),
+        );
+        registry.insert(
+            "wait_any_subagent".into(),
+            Arc::new(WaitAnySubagentTool::new(ctx.clone())),
+        );
+        registry.insert(
+            "wait_all_subagents".into(),
+            Arc::new(WaitAllSubagentsTool::new(ctx.clone())),
+        );
+        registry.insert(
+            "abort_subagent".into(),
+            Arc::new(AbortSubagentTool::new(ctx.clone())),
+        );
         Ok(())
     }
 
@@ -139,11 +176,14 @@ impl Middleware for SubagentMiddleware {
         // the whole spawn tree subscribes to it and bails at its next await,
         // each driving its *own* middlewares' `on_turn_end` so grandchildren
         // cascade down too (real recursion across depth, no reliance on the
-        // runtime re-poling one layer before the next). Then `abort_all_and_clear`
-        // JoinHandle-aborts any still-running direct children that hadn't
-        // yielded to the token yet and clears this registry.
-        self.ctx.run_cancel.cancel();
-        self.ctx.registry.abort_all_and_clear();
+        // runtime re-poling one layer before the next). Then wait for direct
+        // children to complete their cooperative cleanup and clear the registry.
+        self.ctx
+            .run_cancel
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .cancel();
+        self.ctx.registry.abort_all_and_clear().await;
         Ok(())
     }
 }
@@ -158,10 +198,8 @@ fn global_agents_toml_path() -> std::path::PathBuf {
 
 /// Resolve the workspace agents.toml path: `<working_directory>/.nekocode/agents.toml`.
 fn workspace_agents_toml_path(working_directory: &str) -> Option<std::path::PathBuf> {
-    let p = std::path::Path::new(working_directory).join(".nekocode").join("agents.toml");
-    if p.exists() {
-        Some(p)
-    } else {
-        None
-    }
+    let p = std::path::Path::new(working_directory)
+        .join(".nekocode")
+        .join("agents.toml");
+    if p.exists() { Some(p) } else { None }
 }

@@ -3,11 +3,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 use tracing::warn;
 
 /// A tool advertised by an MCP server.
@@ -79,6 +79,9 @@ impl StdioTransport {
                     }
                 }
             }
+            // Drop every outstanding sender when the transport reader exits so
+            // callers fail promptly instead of waiting for their timeout.
+            pending_clone.lock().await.clear();
         });
 
         Ok(Self {
@@ -107,14 +110,28 @@ impl StdioTransport {
         }
         {
             let mut stdin = self.stdin.lock().await;
-            stdin.write_all(line.as_bytes()).await?;
-            stdin.flush().await?;
+            if let Err(error) = async {
+                stdin.write_all(line.as_bytes()).await?;
+                stdin.flush().await
+            }
+            .await
+            {
+                self.pending.lock().await.remove(&id);
+                return Err(error.into());
+            }
         }
 
-        let resp = tokio::time::timeout(std::time::Duration::from_secs(30), rx)
-            .await
-            .context("MCP stdio request timed out (30s)")?
-            .context("MCP stdio reader dropped the request channel")?;
+        let resp = match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(_)) => {
+                self.pending.lock().await.remove(&id);
+                anyhow::bail!("MCP stdio reader dropped the request channel");
+            }
+            Err(_) => {
+                self.pending.lock().await.remove(&id);
+                anyhow::bail!("MCP stdio request timed out (30s)");
+            }
+        };
 
         if let Some(err) = resp.get("error") {
             anyhow::bail!("MCP error calling {method}: {err}");
@@ -193,10 +210,7 @@ impl HttpTransport {
             }
         }
 
-        let resp = req
-            .send()
-            .await
-            .context("MCP HTTP request failed")?;
+        let resp = req.send().await.context("MCP HTTP request failed")?;
 
         // The Streamable HTTP spec lets servers return either a bare JSON
         // response or an SSE stream whose last `data:` line is the result.
@@ -208,7 +222,11 @@ impl HttpTransport {
             .to_string();
 
         // Capture the session id if the server assigned one.
-        if let Some(sid) = resp.headers().get("Mcp-Session-Id").and_then(|v| v.to_str().ok()) {
+        if let Some(sid) = resp
+            .headers()
+            .get("Mcp-Session-Id")
+            .and_then(|v| v.to_str().ok())
+        {
             let mut guard = self.session_id.lock().await;
             *guard = Some(sid.to_string());
         }
@@ -216,7 +234,9 @@ impl HttpTransport {
         let result = if content_type.contains("text/event-stream") {
             extract_last_event_data(resp).await?
         } else {
-            resp.json::<Value>().await.context("MCP HTTP: bad JSON body")?
+            resp.json::<Value>()
+                .await
+                .context("MCP HTTP: bad JSON body")?
         };
 
         if let Some(err) = result.get("error") {
@@ -329,7 +349,8 @@ impl McpClient {
                 }),
             )
             .await?;
-        self.notify("notifications/initialized", Value::Null).await?;
+        self.notify("notifications/initialized", Value::Null)
+            .await?;
         Ok(())
     }
 
@@ -344,12 +365,9 @@ impl McpClient {
     /// Call `tools/list`.
     pub async fn list_tools(&self) -> Result<Vec<McpToolInfo>> {
         let result = self.request("tools/list", serde_json::json!({})).await?;
-        let tools_val = result
-            .get("tools")
-            .cloned()
-            .unwrap_or(Value::Array(vec![]));
-        let tools: Vec<McpToolInfo> = serde_json::from_value(tools_val)
-            .context("failed to parse MCP tools/list response")?;
+        let tools_val = result.get("tools").cloned().unwrap_or(Value::Array(vec![]));
+        let tools: Vec<McpToolInfo> =
+            serde_json::from_value(tools_val).context("failed to parse MCP tools/list response")?;
         Ok(tools)
     }
 

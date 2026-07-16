@@ -75,14 +75,12 @@ pub fn parse_skill_md(content: &str, expected_name: Option<&str>) -> anyhow::Res
     if let Some(expected) = expected_name
         && name != expected
     {
-        anyhow::bail!(
-            "SKILL.md `name` ({name}) must match parent directory name ({expected})"
-        );
+        anyhow::bail!("SKILL.md `name` ({name}) must match parent directory name ({expected})");
     }
 
-    let description = fm
-        .description
-        .ok_or_else(|| anyhow::anyhow!("SKILL.md frontmatter missing required field: description"))?;
+    let description = fm.description.ok_or_else(|| {
+        anyhow::anyhow!("SKILL.md frontmatter missing required field: description")
+    })?;
     validate_description(&description)?;
 
     if let Some(c) = &fm.compatibility {
@@ -120,9 +118,7 @@ fn validate_name(name: &str) -> anyhow::Result<()> {
     }
     for c in name.chars() {
         if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
-            anyhow::bail!(
-                "`name` may only contain lowercase letters, digits, and hyphens: {name}"
-            );
+            anyhow::bail!("`name` may only contain lowercase letters, digits, and hyphens: {name}");
         }
     }
     Ok(())
@@ -198,7 +194,10 @@ mod tests {
         assert_eq!(s.name, "pdf-processing");
         assert_eq!(s.license.as_deref(), Some("Apache-2.0"));
         assert_eq!(s.compatibility.as_deref(), Some("Requires Python 3.14+"));
-        assert_eq!(s.metadata.get("author").map(String::as_str), Some("example-org"));
+        assert_eq!(
+            s.metadata.get("author").map(String::as_str),
+            Some("example-org")
+        );
         assert_eq!(s.metadata.get("version").map(String::as_str), Some("1.0"));
         assert_eq!(s.allowed_tools.as_deref(), Some("Bash(git:*) Read"));
     }
@@ -267,12 +266,9 @@ mod tests {
 
     #[test]
     fn enforces_name_matches_dir() {
-        let e = parse_skill_md(
-            "---\nname: foo\ndescription: x\n---\nbody",
-            Some("bar"),
-        )
-        .unwrap_err()
-        .to_string();
+        let e = parse_skill_md("---\nname: foo\ndescription: x\n---\nbody", Some("bar"))
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("parent directory"));
     }
 

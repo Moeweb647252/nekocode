@@ -190,10 +190,7 @@ mod tests {
     #[tokio::test]
     async fn read_skill_returns_body() {
         let mut map = HashMap::new();
-        map.insert(
-            "demo".to_string(),
-            make_skill("demo", None, "Hello body."),
-        );
+        map.insert("demo".to_string(), make_skill("demo", None, "Hello body."));
         let tool = ReadSkillTool {
             skills: Arc::new(map),
         };
@@ -278,10 +275,7 @@ mod tests {
     #[tokio::test]
     async fn read_skill_file_rejects_builtin() {
         let mut map = HashMap::new();
-        map.insert(
-            "demo".to_string(),
-            make_skill("demo", None, ""),
-        );
+        map.insert("demo".to_string(), make_skill("demo", None, ""));
         let tool = ReadSkillFileTool {
             skills: Arc::new(map),
         };

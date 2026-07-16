@@ -74,6 +74,15 @@ pub struct Agent {
     pub extensions: Extensions,
 }
 
+impl Agent {
+    /// Permanently release middleware-owned resources before cache eviction.
+    pub async fn shutdown(&self) {
+        for middleware in self.middlewares.iter() {
+            let _ = middleware.shutdown().await;
+        }
+    }
+}
+
 #[cfg(test)]
 mod middleware_event_tests {
     use super::*;
@@ -110,4 +119,3 @@ mod middleware_event_tests {
         assert_eq!(json["data"]["data"]["data"]["type"], "streamEvent");
     }
 }
-

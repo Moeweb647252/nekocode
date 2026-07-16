@@ -15,6 +15,7 @@ pub async fn update_middleware(
     State(mut state): State<AppState>,
     Json(payload): Json<UpdateMiddleware>,
 ) -> ApiResult {
+    let _lifecycle = state.thread_lifecycle.lock().await;
     let mw = toasty::query!(Middleware FILTER .id == #(payload.id))
         .first()
         .exec(&mut state.db)
@@ -37,6 +38,6 @@ pub async fn update_middleware(
     }
     update.exec(&mut state.db).await?;
 
-    state.active_threads.remove(&mw.thread_id);
+    crate::api::thread::shutdown_and_remove_agent(&state.active_threads, mw.thread_id).await;
     ApiResponse::ok(())
 }

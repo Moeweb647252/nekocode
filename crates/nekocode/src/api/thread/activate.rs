@@ -17,6 +17,7 @@ pub async fn activate_thread(
     State(state): State<AppState>,
     Json(payload): Json<ActivateThread>,
 ) -> ApiResult {
+    let _lifecycle = state.thread_lifecycle.lock().await;
     let thread_id = payload.id;
 
     let thread = toasty::query!(Thread FILTER .id == #thread_id)
@@ -53,6 +54,7 @@ pub async fn activate_thread(
             config: state.config.clone(),
             active_threads: state.active_threads.clone(),
             generate_states: state.generate_states.clone(),
+            thread_lifecycle: state.thread_lifecycle.clone(),
         },
     );
     let ctx = MiddlewareBuildContext {

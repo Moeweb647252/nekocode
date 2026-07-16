@@ -52,9 +52,8 @@ impl AnthropicStream {
             match event.event_type.as_str() {
                 "ping" => continue,
                 _ => {
-                    let delta: RawMessageStreamEvent =
-                        serde_json::from_str(&event.data)
-                            .map_err(ProviderError::DeserializationError)?;
+                    let delta: RawMessageStreamEvent = serde_json::from_str(&event.data)
+                        .map_err(ProviderError::DeserializationError)?;
                     match self.handle_delta(delta) {
                         Some(event) => return Ok(Some(event)),
                         None => continue,

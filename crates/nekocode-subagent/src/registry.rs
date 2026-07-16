@@ -1,6 +1,6 @@
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::atomic::AtomicU64;
 
 use dashmap::DashMap;
 use nekocode_types::generate::{Message, Usage};
@@ -23,7 +23,10 @@ impl SubagentRunState {
     /// Whether `read_subagent`'s result is available to consume: true once the
     /// subagent reached a terminal state (`Finished` or `Error`).
     pub fn is_ready(&self) -> bool {
-        matches!(self, SubagentRunState::Finished | SubagentRunState::Error(_))
+        matches!(
+            self,
+            SubagentRunState::Finished | SubagentRunState::Error(_)
+        )
     }
 }
 
@@ -106,7 +109,10 @@ impl SubagentRegistry {
     /// Allocate a new monotonic agent_id and insert a Running entry.
     /// Returns the allocated id. Called by spawn_subagent.
     pub fn allocate_running(&self) -> u64 {
-        let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
         self.states.insert(id, SubagentState::new(id));
         id
     }
@@ -163,40 +169,44 @@ impl SubagentRegistry {
         }
     }
 
-    /// Abort a subagent's background task (if running) and remove its entry.
-    pub fn abort(&self, agent_id: u64) {
-        if let Some((_, state)) = self.states.remove(&agent_id)
-            && let Some(handle) = state.task_handle
-        {
-            handle.abort();
+    /// Cooperatively cancel a subagent, wait for its cleanup, and remove it.
+    pub async fn abort(&self, agent_id: u64) {
+        if let Some((_, state)) = self.states.remove(&agent_id) {
+            state.cancel.cancel();
+            if let Some(mut handle) = state.task_handle
+                && tokio::time::timeout(std::time::Duration::from_secs(5), &mut handle)
+                    .await
+                    .is_err()
+            {
+                handle.abort();
+                let _ = handle.await;
+            }
         }
     }
 
-    /// Abort every running subagent's background task and clear the registry.
-    /// Returns the ids of all tracked subagents (so cascade-delete can evict
-    /// them), aborting in-flight task handles where present.
-    pub fn abort_all_and_clear(&self) -> Vec<u64> {
-        let mut aborted = Vec::new();
-        // Cancel every direct child's per-state token so their run_subagent select!
-        // bails at its next await. (Note: cross-DEPTH tree-wide cancellation is
-        // driven by the shared `run_cancel` on SubagentContext, cancelled once
-        // by the root's on_turn_end — every descendant subscribes to the same
-        // flag and ends concurrently. This per-state cancel handles direct
-        // children/abort_subagent and is the backstop for tasks not yet
-        // polled onto run_cancel.) JoinHandle::abort() below is the hard
-        // guarantee for tasks that don't yield to either token promptly.
-        for entry in self.states.iter() {
-            entry.cancel.cancel();
-            aborted.push(entry.agent_id);
-        }
-        // Abort handles, then clear.
-        for entry in self.states.iter() {
-            if let Some(handle) = &entry.task_handle {
-                handle.abort();
+    /// Cooperatively cancel every running subagent, wait for cleanup, and clear
+    /// the registry. A timed-out cleanup is force-aborted only after its token
+    /// has been delivered.
+    pub async fn abort_all_and_clear(&self) -> Vec<u64> {
+        let ids = self.all_agent_ids();
+        let mut states = Vec::with_capacity(ids.len());
+        for id in &ids {
+            if let Some((_, state)) = self.states.remove(id) {
+                state.cancel.cancel();
+                states.push(state);
             }
         }
-        self.states.clear();
-        aborted
+        for state in states {
+            if let Some(mut handle) = state.task_handle
+                && tokio::time::timeout(std::time::Duration::from_secs(5), &mut handle)
+                    .await
+                    .is_err()
+            {
+                handle.abort();
+                let _ = handle.await;
+            }
+        }
+        ids
     }
 
     /// Whether the registry currently tracks `agent_id`.
@@ -275,21 +285,21 @@ mod tests {
         assert!(reg.run_state(id).is_ready());
     }
 
-    #[test]
-    fn abort_removes_entry() {
+    #[tokio::test]
+    async fn abort_removes_entry() {
         let reg = SubagentRegistry::new();
         let id = reg.allocate_running();
-        reg.abort(id);
+        reg.abort(id).await;
         assert!(!reg.contains(id));
         assert!(matches!(reg.run_state(id), SubagentRunState::Idle));
     }
 
-    #[test]
-    fn abort_all_and_clear_empties_and_returns_ids() {
+    #[tokio::test]
+    async fn abort_all_and_clear_empties_and_returns_ids() {
         let reg = SubagentRegistry::new();
         let id1 = reg.allocate_running();
         let id2 = reg.allocate_running();
-        let aborted = reg.abort_all_and_clear();
+        let aborted = reg.abort_all_and_clear().await;
         assert_eq!(aborted.len(), 2, "both running entries aborted");
         assert!(!reg.contains(id1));
         assert!(!reg.contains(id2));

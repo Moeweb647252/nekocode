@@ -31,9 +31,10 @@ pub async fn list_skills(State(state): State<AppState>) -> ApiResult {
         .map(|s| {
             let (source, path) = match &s.source {
                 SkillSource::Builtin => ("builtin".to_string(), None),
-                SkillSource::UserDefined { manifest_path } => {
-                    ("user".to_string(), Some(manifest_path.display().to_string()))
-                }
+                SkillSource::UserDefined { manifest_path } => (
+                    "user".to_string(),
+                    Some(manifest_path.display().to_string()),
+                ),
             };
             SkillInfo {
                 name: s.name,

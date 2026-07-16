@@ -1,7 +1,7 @@
 use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 
-use crate::tool::parse_agent_id;
 use crate::SubagentContext;
+use crate::tool::parse_agent_id;
 
 /// The `abort_subagent` tool: fires the subagent's per-agent cancellation
 /// token, aborts its background task if still running, and removes its entry
@@ -41,7 +41,7 @@ impl Tool for AbortSubagentTool {
                 agent_id
             )));
         }
-        self.ctx.registry.abort(agent_id);
+        self.ctx.registry.abort(agent_id).await;
         Ok(serde_json::json!({
             "agent_id": agent_id,
             "aborted": true,

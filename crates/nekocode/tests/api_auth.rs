@@ -18,11 +18,7 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn test_db_path() -> PathBuf {
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "nekocode_api_test_{}_{}.db",
-        std::process::id(),
-        n
-    ))
+    std::env::temp_dir().join(format!("nekocode_api_test_{}_{}.db", std::process::id(), n))
 }
 
 async fn test_state(auth: AuthenticationConfig) -> AppState {
@@ -36,6 +32,7 @@ async fn test_state(auth: AuthenticationConfig) -> AppState {
         config: Arc::new(RwLock::new(config)),
         generate_states: Arc::new(dashmap::DashMap::new()),
         active_threads: Arc::new(dashmap::DashMap::new()),
+        thread_lifecycle: Arc::new(tokio::sync::Mutex::new(())),
     }
 }
 

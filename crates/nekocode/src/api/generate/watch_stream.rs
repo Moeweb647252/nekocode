@@ -40,7 +40,8 @@ pub async fn handle_websocket(
     drop(generate_state_ref);
 
     // Subscribe first so no events are missed between replay and live listening.
-    let mut rx = generate_state.broadcast.resubscribe();
+    let mut rx = generate_state.broadcast.subscribe();
+    let mut terminal = generate_state.terminal();
 
     // Replay historical deltas so late joiners catch up. We track a contiguous
     // watermark: the index one past the last replayed event. Using a strict
@@ -68,6 +69,12 @@ pub async fn handle_websocket(
 
     let cancellation = generate_state.cancellation_token.clone();
 
+    let initial_stop = { terminal.borrow().clone() };
+    if let Some(stop) = initial_stop {
+        super::send_terminal(ws, stop).await;
+        return Ok(());
+    }
+
     loop {
         tokio::select! {
             result = rx.recv() => {
@@ -86,7 +93,12 @@ pub async fn handle_websocket(
                         .await?;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        super::send_stop(ws, Reason::Finished, serde_json::Value::Null).await;
+                        let terminal_stop = { terminal.borrow().clone() };
+                        let stop = terminal_stop.unwrap_or_else(|| super::StopReason {
+                            reason: Reason::Error,
+                            detail: "generation event channel closed without a terminal result".into(),
+                        });
+                        super::send_terminal(ws, stop).await;
                         return Ok(());
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
@@ -105,6 +117,21 @@ pub async fn handle_websocket(
                             .await?;
                         }
                     }
+                }
+            }
+            changed = terminal.changed() => {
+                if changed.is_err() {
+                    super::send_stop(
+                        ws,
+                        Reason::Error,
+                        "generation ended without a terminal result".into(),
+                    ).await;
+                    return Ok(());
+                }
+                let terminal_stop = { terminal.borrow().clone() };
+                if let Some(stop) = terminal_stop {
+                    super::send_terminal(ws, stop).await;
+                    return Ok(());
                 }
             }
             _ = cancellation.cancelled() => {

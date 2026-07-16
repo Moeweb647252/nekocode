@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Typed configuration for the `shell` middleware. Deserialized from the
 /// per-thread `Middleware.config` JSON column (`{}` by default).
@@ -78,10 +78,7 @@ mod tests {
             working_directory: Some("/tmp".into()),
             shell: Some("zsh".into()),
             timeout_secs: Some(30),
-            envs: HashMap::from([
-                ("FOO".into(), "bar".into()),
-                ("BAZ".into(), "qux".into()),
-            ]),
+            envs: HashMap::from([("FOO".into(), "bar".into()), ("BAZ".into(), "qux".into())]),
         };
         let v = cfg.to_value();
         // Verify camelCase serialization.

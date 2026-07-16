@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::warn;
 
-use crate::skill::{parse_skill_md, Skill, SkillSource};
+use crate::skill::{Skill, SkillSource, parse_skill_md};
 
 /// Builtin skill content compiled into the binary, keyed by skill name.
 /// Builtins are prompt-only — they have no on-disk root, so they cannot
@@ -112,7 +112,10 @@ async fn load_skill_directory(dir: &Path) -> Option<Skill> {
     let dir_name = match dir.file_name().and_then(|n| n.to_str()) {
         Some(n) => n,
         None => {
-            warn!("Skipping skill directory with non-utf8 name: {}", dir.display());
+            warn!(
+                "Skipping skill directory with non-utf8 name: {}",
+                dir.display()
+            );
             return None;
         }
     };
@@ -144,11 +147,8 @@ mod tests {
 
     fn temp_skills_dir() -> PathBuf {
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "nekocode_skills_test_{}_{}",
-            std::process::id(),
-            n
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("nekocode_skills_test_{}_{}", std::process::id(), n));
         std::fs::create_dir_all(&dir).expect("create temp skills dir");
         dir
     }

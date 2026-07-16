@@ -55,10 +55,7 @@ impl Agent {
         // Flatten the working history into a single message list. Owned once,
         // reused as the immutable prefix when rebuilding each generation's
         // request from memory (replaces the DB reload the old loop did).
-        let old_messages: Vec<Message> = old_turns
-            .into_iter()
-            .flat_map(|t| t.messages)
-            .collect();
+        let old_messages: Vec<Message> = old_turns.into_iter().flat_map(|t| t.messages).collect();
 
         // The current turn's messages, grown in memory as the run progresses.
         // The user message is the first entry. On error these hold whatever was
@@ -98,6 +95,12 @@ impl Agent {
         // match turns an early `?` return into a partial-turn `Err(Turn)` while
         // preserving everything accumulated so far.
         let result: Result<Turn, AgentError> = async {
+            for middleware in self.middlewares.iter() {
+                tokio::select! {
+                    _ = cancellation.cancelled() => return Err(AgentError::Cancelled),
+                    result = middleware.on_turn_start() => result?,
+                }
+            }
             let mut request = GenerateRequest {
                 messages: old_messages
                     .iter()
@@ -110,9 +113,14 @@ impl Agent {
             loop {
                 let mut tool_registry = ToolRegistry::new();
                 for middleware in self.middlewares.iter() {
-                    middleware
-                        .before_generate(&mut request, &mut tool_registry, &mev_tx)
-                        .await?;
+                    tokio::select! {
+                        _ = cancellation.cancelled() => return Err(AgentError::Cancelled),
+                        result = middleware.before_generate(
+                            &mut request,
+                            &mut tool_registry,
+                            &mev_tx,
+                        ) => result?,
+                    }
                 }
                 request.tool_specs = tool_registry.specs();
                 let system_prompt = request.system_prompt.clone();
@@ -150,9 +158,9 @@ impl Agent {
                             return Err(error);
                         }
                     }
-                    let response = handle
-                        .await
-                        .map_err(|e| AgentError::Other(anyhow::anyhow!("error joining task {e}")))??;
+                    let response = handle.await.map_err(|e| {
+                        AgentError::Other(anyhow::anyhow!("error joining task {e}"))
+                    })??;
                     // Accumulate usage from this provider call.
                     total_usage.total_input += response.usage.total_input;
                     total_usage.total_output += response.usage.total_output;
@@ -167,14 +175,20 @@ impl Agent {
                     });
                     let mut this_generation_had_tool_calls = false;
                     for block in response.message.blocks.iter() {
-                        if let nekocode_types::generate::AssistantContentBlock::ToolCall(tool_call) = block {
+                        if let nekocode_types::generate::AssistantContentBlock::ToolCall(
+                            tool_call,
+                        ) = block
+                        {
                             this_generation_had_tool_calls = true;
                             let tool_call_result = match tool_registry.get(&tool_call.name) {
                                 Some(tool) => ToolCallResult {
                                     id: tool_call.id.clone(),
-                                    result: ToolCallResultInner::from(
-                                        tool.call(tool_call.args.clone()).await,
-                                    ),
+                                    result: ToolCallResultInner::from(tokio::select! {
+                                        _ = cancellation.cancelled() => {
+                                            return Err(AgentError::Cancelled);
+                                        }
+                                        result = tool.call(tool_call.args.clone()) => result,
+                                    }),
                                 },
                                 None => ToolCallResult {
                                     id: tool_call.id.clone(),
@@ -192,10 +206,7 @@ impl Agent {
                                 data: StreamEventData::ToolCallResult(tool_call_result),
                                 created_at: jiff::Timestamp::now(),
                             };
-                            Self::send(
-                                &sink,
-                                stream_event.data.clone(),
-                            )?;
+                            Self::send(&sink, stream_event.data.clone())?;
                             generate_response.merge_stream_event(stream_event);
                         }
                     }
@@ -225,9 +236,13 @@ impl Agent {
 
                 let mut control_flow = AgentControlFlow::Output;
                 for middleware in self.middlewares.iter() {
-                    middleware
-                        .after_generate(&generate_response, &mut control_flow)
-                        .await?;
+                    tokio::select! {
+                        _ = cancellation.cancelled() => return Err(AgentError::Cancelled),
+                        result = middleware.after_generate(
+                            &generate_response,
+                            &mut control_flow,
+                        ) => result?,
+                    }
                 }
                 match control_flow {
                     AgentControlFlow::Output => break,
@@ -295,10 +310,7 @@ impl Agent {
 
     /// Send a stream event as an [`crate::agent::AgentEvent`], allocating
     /// the index from the shared sink. A closed client channel fails the run.
-    fn send(
-        sink: &crate::agent::AgentEventSink,
-        data: StreamEventData,
-    ) -> Result<(), AgentError> {
+    fn send(sink: &crate::agent::AgentEventSink, data: StreamEventData) -> Result<(), AgentError> {
         sink.send(AgentEventType::StreamEvent(StreamEvent {
             data,
             created_at: jiff::Timestamp::now(),
@@ -359,7 +371,9 @@ mod tests {
             "nekocode_runloop_test_{}_{n}.db",
             std::process::id()
         ));
-        let db = nekocode_entities::prepare_db(path).await.expect("prepare_db");
+        let db = nekocode_entities::prepare_db(path)
+            .await
+            .expect("prepare_db");
         Agent {
             thread_id: 0,
             working_directory: "/tmp".into(),
@@ -396,10 +410,7 @@ mod tests {
 
         assert!(turn.finished, "finished flag should be true on success");
         assert_eq!(turn.messages.len(), 2, "user + one assistant message");
-        assert!(matches!(
-            turn.messages[0].data,
-            MessageType::User(_)
-        ));
+        assert!(matches!(turn.messages[0].data, MessageType::User(_)));
         assert!(matches!(turn.messages[1].data, MessageType::Assistant(_)));
         // MockProvider reports 10 input / 5 output per call; one call here.
         assert_eq!(turn.usage.total_input, 10);
@@ -437,7 +448,10 @@ mod tests {
             4,
             "user + assistant(toolcall) + toolresult + assistant(text)"
         );
-        assert!(matches!(turn.messages[2].data, MessageType::ToolCallResult(_)));
+        assert!(matches!(
+            turn.messages[2].data,
+            MessageType::ToolCallResult(_)
+        ));
         // Two provider calls => 20 input / 10 output aggregated.
         assert_eq!(turn.usage.total_input, 20);
         assert_eq!(turn.usage.total_output, 10);
@@ -513,8 +527,7 @@ mod tests {
         });
         let turn = tokio::time::timeout(std::time::Duration::from_secs(1), run)
             .await
-            .expect("cancellation should finish the run")
-            ;
+            .expect("cancellation should finish the run");
         cancel_task.await.expect("cancellation task should join");
         assert!(turn.is_err(), "cancelled turn returns a partial result");
         assert!(cleaned.load(Ordering::SeqCst), "middleware cleanup ran");
@@ -526,7 +539,10 @@ mod tests {
     #[tokio::test]
     async fn run_loop_middleware_regenerate_injects_message() {
         let agent = make_agent(
-            Arc::new(MockProvider::new(vec![text_msg("first"), text_msg("second")])),
+            Arc::new(MockProvider::new(vec![
+                text_msg("first"),
+                text_msg("second"),
+            ])),
             vec![Box::new(OneShotRegenerateMiddleware {
                 fired: std::sync::Mutex::new(false),
                 inject: "regenerate me".into(),

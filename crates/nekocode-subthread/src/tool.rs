@@ -5,11 +5,7 @@ use nekocode_entities::thread::Thread;
 use nekocode_types::tool::{Tool, ToolError};
 use toasty::Json;
 
-use crate::{
-    config::SubthreadConfig,
-    path::ensure_within,
-    registry::SubthreadRegistry,
-};
+use crate::{config::SubthreadConfig, path::ensure_within, registry::SubthreadRegistry};
 
 /// Shared context carried by every subthread tool. One instance lives behind
 /// an `Arc` inside `SubthreadMiddleware` and is cloned (cheaply — all fields
@@ -39,14 +35,9 @@ impl SubthreadContext {
             .first()
             .exec(&mut db)
             .await
-            .map_err(|e| {
-                ToolError::ExecutionError(format!("Failed to query subthread: {e}"))
-            })?
+            .map_err(|e| ToolError::ExecutionError(format!("Failed to query subthread: {e}")))?
             .ok_or_else(|| {
-                ToolError::InvalidParameters(format!(
-                    "No subthread with id {}",
-                    subthread_id
-                ))
+                ToolError::InvalidParameters(format!("No subthread with id {}", subthread_id))
             })?;
         if thread.own_by_id != Some(self.parent_thread_id) {
             return Err(ToolError::InvalidParameters(format!(
@@ -64,12 +55,8 @@ impl SubthreadContext {
         let rows = toasty::query!(Middleware FILTER .thread_id == #subthread_id)
             .exec(&mut db)
             .await
-            .map_err(|e| {
-                ToolError::ExecutionError(format!("Failed to query middlewares: {e}"))
-            })?;
-        Ok(rows
-            .into_iter()
-            .any(|m| m.name == "subthread" && m.enabled))
+            .map_err(|e| ToolError::ExecutionError(format!("Failed to query middlewares: {e}")))?;
+        Ok(rows.into_iter().any(|m| m.name == "subthread" && m.enabled))
     }
 }
 
@@ -109,10 +96,7 @@ impl Tool for SpawnSubthreadTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let working_directory = params
             .get("working_directory")
             .and_then(|v| v.as_str())
@@ -126,7 +110,8 @@ impl Tool for SpawnSubthreadTool {
 
         // Validate containment against the parent's working directory.
         let parent = std::path::Path::new(&self.ctx.parent_working_directory);
-        let canon = ensure_within(parent, working_directory).map_err(ToolError::InvalidParameters)?;
+        let canon =
+            ensure_within(parent, working_directory).map_err(ToolError::InvalidParameters)?;
         let working_directory = canon.to_string_lossy().to_string();
 
         let mut db = self.ctx.db.clone();
@@ -136,9 +121,7 @@ impl Tool for SpawnSubthreadTool {
             .first()
             .exec(&mut db)
             .await
-            .map_err(|e| {
-                ToolError::ExecutionError(format!("Failed to query parent thread: {e}"))
-            })?
+            .map_err(|e| ToolError::ExecutionError(format!("Failed to query parent thread: {e}")))?
             .ok_or_else(|| {
                 ToolError::ExecutionError(format!(
                     "Parent thread {} not found",
@@ -158,17 +141,15 @@ impl Tool for SpawnSubthreadTool {
                 )
                 .await
                 .map_err(|e| {
-                    ToolError::ExecutionError(format!("Failed to find/create parent workspace: {e}"))
+                    ToolError::ExecutionError(format!(
+                        "Failed to find/create parent workspace: {e}"
+                    ))
                 })?;
                 let mut update = toasty::query!(Thread FILTER .id == #(parent_thread.id)).update();
-                update
-                    .set_workspace_id(Some(workspace.id));
-                update
-                    .exec(&mut db)
-                    .await
-                    .map_err(|e| {
-                        ToolError::ExecutionError(format!("Failed to link parent workspace: {e}"))
-                    })?;
+                update.set_workspace_id(Some(workspace.id));
+                update.exec(&mut db).await.map_err(|e| {
+                    ToolError::ExecutionError(format!("Failed to link parent workspace: {e}"))
+                })?;
                 workspace.id
             }
         };
@@ -181,9 +162,7 @@ impl Tool for SpawnSubthreadTool {
         })
         .exec(&mut db)
         .await
-        .map_err(|e| {
-            ToolError::ExecutionError(format!("Failed to create subthread: {e}"))
-        })?;
+        .map_err(|e| ToolError::ExecutionError(format!("Failed to create subthread: {e}")))?;
 
         // Seed default middlewares: shell + tool scoped to the subthread's wd.
         let shell_cfg = nekocode_shell_config_value(&working_directory);
@@ -194,9 +173,7 @@ impl Tool for SpawnSubthreadTool {
         })
         .exec(&mut db)
         .await
-        .map_err(|e| {
-            ToolError::ExecutionError(format!("Failed to seed shell middleware: {e}"))
-        })?;
+        .map_err(|e| ToolError::ExecutionError(format!("Failed to seed shell middleware: {e}")))?;
 
         let tool_cfg = nekocode_file_config_value(&working_directory);
         toasty::create!(Middleware {
@@ -206,15 +183,16 @@ impl Tool for SpawnSubthreadTool {
         })
         .exec(&mut db)
         .await
-        .map_err(|e| {
-            ToolError::ExecutionError(format!("Failed to seed tool middleware: {e}"))
-        })?;
+        .map_err(|e| ToolError::ExecutionError(format!("Failed to seed tool middleware: {e}")))?;
 
         // Optionally seed the subthread middleware so this subthread can spawn
         // its own sub-subthreads. allow_subthread defaults to false inside the
         // nested config to bound recursion depth.
         if allow_subthread {
-            let sub_cfg = SubthreadConfig { allow_subthread: false }.to_value();
+            let sub_cfg = SubthreadConfig {
+                allow_subthread: false,
+            }
+            .to_value();
             toasty::create!(Middleware {
                 thread_id: subthread.id,
                 name: "subthread".to_string(),
@@ -223,9 +201,7 @@ impl Tool for SpawnSubthreadTool {
             .exec(&mut db)
             .await
             .map_err(|e| {
-                ToolError::ExecutionError(format!(
-                    "Failed to seed subthread middleware: {e}"
-                ))
+                ToolError::ExecutionError(format!("Failed to seed subthread middleware: {e}"))
             })?;
         }
 
@@ -283,10 +259,7 @@ impl Tool for ListSubthreadsTool {
         }
     }
 
-    async fn call(
-        &self,
-        _params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, _params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let mut db = self.ctx.db.clone();
         let rows = toasty::query!(Thread FILTER .own_by_id == #(self.ctx.parent_thread_id) ORDER BY .id ASC)
             .exec(&mut db)
@@ -341,10 +314,7 @@ impl Tool for InspectSubthreadTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let subthread_id = parse_subthread_id(&params)?;
         let thread = self.ctx.require_owned_subthread(subthread_id).await?;
         let run_state = self.ctx.registry.run_state(subthread_id);
@@ -434,10 +404,7 @@ impl Tool for ReadSubthreadTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let subthread_id = parse_subthread_id(&params)?;
         // Validate ownership even though we only read.
         self.ctx.require_owned_subthread(subthread_id).await?;
@@ -446,14 +413,9 @@ impl Tool for ReadSubthreadTool {
             .get("start_turn")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        let limit = params
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10);
+        let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(10);
         if limit == 0 {
-            return Err(ToolError::InvalidParameters(
-                "'limit' must be >= 1".into(),
-            ));
+            return Err(ToolError::InvalidParameters("'limit' must be >= 1".into()));
         }
         // Default true: the tool is intended to give the model back its own
         // conversation prose, not the implementation plumbing around it.
@@ -467,13 +429,12 @@ impl Tool for ReadSubthreadTool {
         // toasty's query DSL lacks a clean OFFSET; the turn counts are small
         // enough that this is acceptable. If a subthread grows large, switch
         // to a turn_index range filter.
-        let turns = toasty::query!(Turn FILTER .thread_id == #subthread_id ORDER BY .turn_index ASC)
-            .include(Turn::fields().messages())
-            .exec(&mut db)
-            .await
-            .map_err(|e| {
-                ToolError::ExecutionError(format!("Failed to query turns: {e}"))
-            })?;
+        let turns =
+            toasty::query!(Turn FILTER .thread_id == #subthread_id ORDER BY .turn_index ASC)
+                .include(Turn::fields().messages())
+                .exec(&mut db)
+                .await
+                .map_err(|e| ToolError::ExecutionError(format!("Failed to query turns: {e}")))?;
 
         let mut out = Vec::new();
         for turn in turns
@@ -526,9 +487,7 @@ fn strip_non_prose(mut message: serde_json::Value) -> Option<serde_json::Value> 
             // `blocks` array carries prose vs plumbing.
             let data = obj.get_mut("data")?.as_object_mut()?;
             if let Some(blocks) = data.get_mut("blocks").and_then(|b| b.as_array_mut()) {
-                blocks.retain(|block| {
-                    block.get("type").and_then(|t| t.as_str()) == Some("text")
-                });
+                blocks.retain(|block| block.get("type").and_then(|t| t.as_str()) == Some("text"));
             }
             // Drop the message entirely if no text blocks survived, so the
             // caller doesn't see an empty assistant turn.
@@ -575,19 +534,14 @@ impl Tool for SubthreadSettingsTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let subthread_id = parse_subthread_id(&params)?;
         self.ctx.require_owned_subthread(subthread_id).await?;
         let mut db = self.ctx.db.clone();
         let rows = toasty::query!(Middleware FILTER .thread_id == #subthread_id)
             .exec(&mut db)
             .await
-            .map_err(|e| {
-                ToolError::ExecutionError(format!("Failed to query middlewares: {e}"))
-            })?;
+            .map_err(|e| ToolError::ExecutionError(format!("Failed to query middlewares: {e}")))?;
         let middlewares: Vec<serde_json::Value> = rows
             .into_iter()
             .map(|m| {
@@ -650,18 +604,13 @@ impl Tool for SetSubthreadSettingsTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let subthread_id = parse_subthread_id(&params)?;
         let middleware_id = params
             .get("middleware_id")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| {
-                ToolError::InvalidParameters(
-                    "Missing or invalid 'middleware_id' parameter".into(),
-                )
+                ToolError::InvalidParameters("Missing or invalid 'middleware_id' parameter".into())
             })?;
         self.ctx.require_owned_subthread(subthread_id).await?;
 
@@ -671,7 +620,8 @@ impl Tool for SetSubthreadSettingsTool {
             crate::registry::SubthreadRunState::Running
         ) {
             return Err(ToolError::ExecutionError(
-                "subthread is currently running; wait for it to finish before changing settings".into(),
+                "subthread is currently running; wait for it to finish before changing settings"
+                    .into(),
             ));
         }
 
@@ -684,14 +634,9 @@ impl Tool for SetSubthreadSettingsTool {
             .first()
             .exec(&mut db)
             .await
-            .map_err(|e| {
-                ToolError::ExecutionError(format!("Failed to query middleware: {e}"))
-            })?
+            .map_err(|e| ToolError::ExecutionError(format!("Failed to query middleware: {e}")))?
             .ok_or_else(|| {
-                ToolError::InvalidParameters(format!(
-                    "No middleware with id {}",
-                    middleware_id
-                ))
+                ToolError::InvalidParameters(format!("No middleware with id {}", middleware_id))
             })?;
         if mw.thread_id != subthread_id {
             return Err(ToolError::InvalidParameters(format!(
@@ -707,9 +652,10 @@ impl Tool for SetSubthreadSettingsTool {
         if let Some(enabled) = enabled {
             update.set_enabled(enabled);
         }
-        update.exec(&mut db).await.map_err(|e| {
-            ToolError::ExecutionError(format!("Failed to update middleware: {e}"))
-        })?;
+        update
+            .exec(&mut db)
+            .await
+            .map_err(|e| ToolError::ExecutionError(format!("Failed to update middleware: {e}")))?;
 
         // Evict any cached agent so the next start_subthread rebuilds it.
         if let Some(controller) = &self.ctx.controller {
@@ -762,19 +708,20 @@ impl Tool for StartSubthreadTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let subthread_id = parse_subthread_id(&params)?;
         let prompt = params
             .get("prompt")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                ToolError::InvalidParameters("Missing 'prompt' parameter".into())
-            })?
+            .ok_or_else(|| ToolError::InvalidParameters("Missing 'prompt' parameter".into()))?
             .to_string();
         self.ctx.require_owned_subthread(subthread_id).await?;
+
+        let controller = self.ctx.controller.clone().ok_or_else(|| {
+            ToolError::ExecutionError(
+                "no thread controller configured; cannot start subthread".into(),
+            )
+        })?;
 
         // Atomically reserve the run before activation so concurrent tool calls
         // cannot both observe an idle state and start the same subthread.
@@ -785,18 +732,21 @@ impl Tool for StartSubthreadTool {
             )));
         }
 
-        let controller = self.ctx.controller.clone().ok_or_else(|| {
-            ToolError::ExecutionError(
-                "no thread controller configured; cannot start subthread".into(),
-            )
-        })?;
+        let cancellation = self
+            .ctx
+            .registry
+            .cancellation_token(subthread_id)
+            .expect("try_start creates a cancellation token");
 
         // Activate (build the agent, insert into active_threads) — or reuse the
         // already-activated agent. `start_subthread`'s semantics are "start the
         // agent run loop", so an already-activated (but not running) subthread
         // is a valid reuse target, not an error. The only refusal happens
         // earlier, when `run_state == Running`.
-        let agent = match controller.activate(subthread_id).await {
+        let agent = match controller
+            .activate(subthread_id, cancellation.clone())
+            .await
+        {
             Ok(agent) => agent,
             Err(e) => {
                 self.ctx.registry.set_error(subthread_id, e.to_string());
@@ -810,22 +760,12 @@ impl Tool for StartSubthreadTool {
             | crate::controller::ActivationOutcome::AlreadyActivated(a) => a,
         };
 
-        // Spawn the background run_loop. Events are discarded; results land in
-        // the DB and are read via read_subthread.
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        // Spawn the background run loop. The controller publishes events and a
+        // terminal result through the same GenerateState used by WebSockets.
         let registry = self.ctx.registry.clone();
         let controller_for_task = controller.clone();
         let handle = tokio::spawn(async move {
-            // Drain the event channel so the agent's send() calls never block
-            // when no one is consuming. Aborted once the run completes.
-            let drain = tokio::spawn(async move {
-                while rx.recv().await.is_some() {}
-            });
-
-            let result = controller_for_task
-                .run(agent, prompt, nekocode_core::agent::AgentEventSink::new(tx))
-                .await;
-            drain.abort();
+            let result = controller_for_task.run(agent, prompt).await;
 
             match result {
                 Ok(()) => registry.set_finished(subthread_id),
@@ -842,7 +782,6 @@ impl Tool for StartSubthreadTool {
         }))
     }
 }
-
 
 use std::time::Duration;
 
@@ -884,10 +823,7 @@ impl Tool for WaitAnySubthreadTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let ids = parse_subthread_ids(&params)?;
         let timeout_secs = parse_timeout(&params)?;
         // Validate ownership of every id.
@@ -897,6 +833,10 @@ impl Tool for WaitAnySubthreadTool {
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(timeout_secs);
         loop {
+            // Register waiters before checking state. `notify_waiters` does not
+            // retain a permit, so checking first creates a lost-wakeup window.
+            let notifications =
+                notification_futures(ids.iter().filter_map(|id| self.ctx.registry.notify(*id)));
             // Check for an already-ready subthread first.
             for id in &ids {
                 let state = self.ctx.registry.run_state(*id);
@@ -919,20 +859,15 @@ impl Tool for WaitAnySubthreadTool {
 
             // Collect Notify handles to await. Re-collect each iteration in case
             // entries were added/removed.
-            let notifies: Vec<_> = ids
-                .iter()
-                .filter_map(|id| self.ctx.registry.notify(*id))
-                .collect();
-
             let sleep = tokio::time::sleep_until(deadline);
             tokio::pin!(sleep);
-            if notifies.is_empty() {
+            if notifications.is_empty() {
                 // Nothing to wait on (no registry entries); just sleep to deadline.
                 (&mut sleep).await;
             } else {
                 tokio::select! {
                     _ = sleep => {}
-                    _ = notify_any(&notifies) => {}
+                    _ = notify_any(notifications) => {}
                 }
             }
             // Loop and re-check.
@@ -978,14 +913,15 @@ impl Tool for WaitAllSubthreadsTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let timeout_secs = parse_timeout(&params)?;
 
         // Resolve the target set.
-        let ids: Vec<u64> = if params.get("subthread_ids").and_then(|v| v.as_array()).is_some() {
+        let ids: Vec<u64> = if params
+            .get("subthread_ids")
+            .and_then(|v| v.as_array())
+            .is_some()
+        {
             let ids = parse_subthread_ids(&params)?;
             for id in &ids {
                 self.ctx.require_owned_subthread(*id).await?;
@@ -1015,6 +951,8 @@ impl Tool for WaitAllSubthreadsTool {
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(timeout_secs);
         loop {
+            let notifications =
+                notification_futures(ids.iter().filter_map(|id| self.ctx.registry.notify(*id)));
             let (mut ready, mut pending) = (Vec::new(), Vec::new());
             for id in &ids {
                 let state = self.ctx.registry.run_state(*id);
@@ -1043,18 +981,14 @@ impl Tool for WaitAllSubthreadsTool {
                 }));
             }
 
-            let notifies: Vec<_> = ids
-                .iter()
-                .filter_map(|id| self.ctx.registry.notify(*id))
-                .collect();
             let sleep = tokio::time::sleep_until(deadline);
             tokio::pin!(sleep);
-            if notifies.is_empty() {
+            if notifications.is_empty() {
                 (&mut sleep).await;
             } else {
                 tokio::select! {
                     _ = sleep => {}
-                    _ = notify_any(&notifies) => {}
+                    _ = notify_any(notifications) => {}
                 }
             }
         }
@@ -1077,9 +1011,7 @@ pub(crate) fn parse_subthread_ids(params: &serde_json::Value) -> Result<Vec<u64>
     arr.iter()
         .map(|v| {
             v.as_u64().ok_or_else(|| {
-                ToolError::InvalidParameters(
-                    "'subthread_ids' must contain integers".into(),
-                )
+                ToolError::InvalidParameters("'subthread_ids' must contain integers".into())
             })
         })
         .collect()
@@ -1090,9 +1022,7 @@ pub(crate) fn parse_timeout(params: &serde_json::Value) -> Result<f64, ToolError
     let secs = params
         .get("timeout")
         .and_then(|v| v.as_f64())
-        .ok_or_else(|| {
-            ToolError::InvalidParameters("Missing 'timeout' parameter".into())
-        })?;
+        .ok_or_else(|| ToolError::InvalidParameters("Missing 'timeout' parameter".into()))?;
     if !secs.is_finite() || secs <= 0.0 {
         return Err(ToolError::InvalidParameters(format!(
             "'timeout' must be a positive number of seconds, got {secs}"
@@ -1104,23 +1034,23 @@ pub(crate) fn parse_timeout(params: &serde_json::Value) -> Result<f64, ToolError
 /// Wait for any of the given `Notify` handles to fire. Each handle is awaited
 /// inside its own pinned async block so the `Notified` future (which borrows
 /// its `Notify`) is owned by the block; `select_all` races them.
-async fn notify_any(notifies: &[std::sync::Arc<tokio::sync::Notify>]) {
+type NotificationFuture = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+fn notification_futures(
+    notifies: impl Iterator<Item = std::sync::Arc<tokio::sync::Notify>>,
+) -> Vec<NotificationFuture> {
+    notifies
+        .map(|notify| Box::pin(notify.notified_owned()) as NotificationFuture)
+        .collect()
+}
+
+async fn notify_any(notifications: Vec<NotificationFuture>) {
     use futures_util::future::select_all;
-    use std::future::Future;
-    use std::pin::Pin;
-    if notifies.is_empty() {
+    if notifications.is_empty() {
         std::future::pending::<()>().await;
         return;
     }
-    let futures: Vec<Pin<Box<dyn Future<Output = ()> + Send>>> = notifies
-        .iter()
-        .map(|n| {
-            let n = n.clone();
-            Box::pin(async move { n.notified().await })
-                as Pin<Box<dyn Future<Output = ()> + Send>>
-        })
-        .collect();
-    let _ = select_all(futures).await;
+    let _ = select_all(notifications).await;
 }
 
 /// Delete a subthread and all of its descendants recursively. Aborts any
@@ -1159,10 +1089,7 @@ impl Tool for DeleteSubthreadTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let subthread_id = parse_subthread_id(&params)?;
         // Validate ownership before delegating to the controller's cascade
         // delete — the controller operates on arbitrary thread ids, so we gate
@@ -1182,9 +1109,7 @@ impl Tool for DeleteSubthreadTool {
         controller
             .delete_subthread(subthread_id)
             .await
-            .map_err(|e| {
-                ToolError::ExecutionError(format!("Failed to delete subthread: {e}"))
-            })?;
+            .map_err(|e| ToolError::ExecutionError(format!("Failed to delete subthread: {e}")))?;
 
         // Also drop the entry from this parent's own in-memory registry so
         // list_subthreads / inspect_subthread stop reporting it immediately.
@@ -1192,7 +1117,7 @@ impl Tool for DeleteSubthreadTool {
         // registry held for the subthread via abort_all_and_clear, but the
         // registry entry itself may still be present if the subthread was
         // idle rather than running.)
-        self.ctx.registry.remove(subthread_id);
+        self.ctx.registry.remove(subthread_id).await;
 
         Ok(serde_json::json!({
             "subthread_id": subthread_id,

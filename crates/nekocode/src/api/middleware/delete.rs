@@ -13,6 +13,7 @@ pub async fn delete_middleware(
     State(mut state): State<AppState>,
     Json(payload): Json<DeleteMiddleware>,
 ) -> ApiResult {
+    let _lifecycle = state.thread_lifecycle.lock().await;
     // Look up the middleware's thread_id for the generating check + evict.
     let mw = toasty::query!(Middleware FILTER .id == #(payload.id))
         .first()
@@ -33,7 +34,7 @@ pub async fn delete_middleware(
         .await?;
 
     // Evict the cached agent so the next activation picks up the change.
-    state.active_threads.remove(&mw.thread_id);
+    crate::api::thread::shutdown_and_remove_agent(&state.active_threads, mw.thread_id).await;
 
     ApiResponse::ok(())
 }

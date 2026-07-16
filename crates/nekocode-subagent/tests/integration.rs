@@ -10,11 +10,12 @@ use nekocode_core::middleware::{Middleware, MiddlewareSpec};
 use nekocode_core::provider::{Provider, ProviderError, ProviderEvent, ProviderResponse};
 use nekocode_subagent::{
     ProfileCatalog, SubagentContext, SubagentMiddlewareFactory, SubagentProfile, SubagentRegistry,
-    tool::{AbortSubagentTool, InspectSubagentTool, ReadSubagentTool, SpawnSubagentTool, WaitAnySubagentTool},
+    tool::{
+        AbortSubagentTool, InspectSubagentTool, ReadSubagentTool, SpawnSubagentTool,
+        WaitAnySubagentTool,
+    },
 };
-use nekocode_types::generate::{
-    AssistantContentBlock, AssistantMessage, StopReason, Usage,
-};
+use nekocode_types::generate::{AssistantContentBlock, AssistantMessage, StopReason, Usage};
 use nekocode_types::tool::Tool;
 use tokio::sync::mpsc;
 
@@ -51,7 +52,9 @@ impl MockProvider {
     fn new(responses: Vec<AssistantMessage>) -> Self {
         let mut r = responses;
         r.reverse();
-        Self { responses: Mutex::new(r) }
+        Self {
+            responses: Mutex::new(r),
+        }
     }
 }
 fn text_msg(s: &str) -> AssistantMessage {
@@ -77,13 +80,22 @@ impl Provider for MockProvider {
             .ok_or_else(|| ProviderError::Other(anyhow::anyhow!("mock exhausted")))?;
         for block in &msg.blocks {
             if let AssistantContentBlock::Text { content, .. } = block {
-                sender.send(ProviderEvent::Content(content.clone())).unwrap();
+                sender
+                    .send(ProviderEvent::Content(content.clone()))
+                    .unwrap();
             }
         }
-        sender.send(ProviderEvent::MessageEnd(StopReason::Stop)).unwrap();
+        sender
+            .send(ProviderEvent::MessageEnd(StopReason::Stop))
+            .unwrap();
         Ok(ProviderResponse {
             message: msg,
-            usage: Usage { total_input: 10, total_output: 5, cache_hit: false, cache_miss: 10 },
+            usage: Usage {
+                total_input: 10,
+                total_output: 5,
+                cache_hit: false,
+                cache_miss: 10,
+            },
         })
     }
 }
@@ -173,7 +185,9 @@ fn make_ctx(allow_nested: bool, max_depth: u32, db: toasty::Db) -> SubagentConte
         depth: 0,
         max_depth,
         allow_nested,
-        run_cancel: tokio_util::sync::CancellationToken::new(),
+        run_cancel: Arc::new(std::sync::RwLock::new(
+            tokio_util::sync::CancellationToken::new(),
+        )),
     }
 }
 
@@ -192,7 +206,9 @@ fn make_pending_ctx(allow_nested: bool, max_depth: u32, db: toasty::Db) -> Subag
         depth: 0,
         max_depth,
         allow_nested,
-        run_cancel: tokio_util::sync::CancellationToken::new(),
+        run_cancel: Arc::new(std::sync::RwLock::new(
+            tokio_util::sync::CancellationToken::new(),
+        )),
     }
 }
 
@@ -377,11 +393,17 @@ async fn spawn_subagent_relays_child_events_as_middleware_event() {
         assert_eq!(mev.source, "subagent");
         assert_eq!(mev.source_id, agent_id);
         assert_eq!(mev.event_type, "agentEvent");
-        assert!(mev.data.is_object(), "data is the serialized child AgentEvent");
+        assert!(
+            mev.data.is_object(),
+            "data is the serialized child AgentEvent"
+        );
     }
     // The child emits at least a streamEvent; ensure it's in the relayed set.
     assert!(relayed.iter().any(|mev| {
-        mev.data.get("data").and_then(|d| d.get("type")).and_then(|t| t.as_str())
+        mev.data
+            .get("data")
+            .and_then(|d| d.get("type"))
+            .and_then(|t| t.as_str())
             == Some("streamEvent")
     }));
 }
@@ -390,11 +412,16 @@ async fn spawn_subagent_relays_child_events_as_middleware_event() {
 async fn abort_all_and_clear_cancels_child_token() {
     let registry = Arc::new(SubagentRegistry::new());
     let id = registry.allocate_running();
-    let cancel = registry.cancel_token(id).expect("token present while running");
+    let cancel = registry
+        .cancel_token(id)
+        .expect("token present while running");
     assert!(!cancel.is_cancelled());
-    let aborted = registry.abort_all_and_clear();
+    let aborted = registry.abort_all_and_clear().await;
     assert_eq!(aborted, vec![id]);
-    assert!(cancel.is_cancelled(), "cancel token fired by abort_all_and_clear");
+    assert!(
+        cancel.is_cancelled(),
+        "cancel token fired by abort_all_and_clear"
+    );
 }
 
 #[tokio::test]
@@ -406,7 +433,9 @@ async fn on_turn_end_aborts_running_subagent() {
     let mw = SubagentMiddleware::from_context(ctx.clone());
     let mut reg = nekocode_core::types::GenerateRequest::default();
     let mut tools = nekocode_types::tool::ToolRegistry::new();
-    mw.before_generate(&mut reg, &mut tools, &mev_tx).await.unwrap();
+    mw.before_generate(&mut reg, &mut tools, &mev_tx)
+        .await
+        .unwrap();
     let spawn = tools.get("spawn_subagent").unwrap().clone();
     let res = spawn
         .call(serde_json::json!({ "profile": "explorer", "prompt": "hi" }))
@@ -427,4 +456,28 @@ async fn on_turn_end_aborts_running_subagent() {
         nekocode_subagent::SubagentRunState::Idle,
         "subagent evicted by on_turn_end"
     );
+}
+
+#[tokio::test]
+async fn turn_start_renews_tree_cancellation_token() {
+    use nekocode_subagent::SubagentMiddleware;
+    let ctx = make_pending_ctx(true, 1, temp_db().await);
+    let middleware = SubagentMiddleware::from_context(ctx.clone());
+
+    middleware.on_turn_start().await.unwrap();
+    let first = ctx
+        .run_cancel
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    middleware.on_turn_end().await.unwrap();
+    assert!(first.is_cancelled());
+
+    middleware.on_turn_start().await.unwrap();
+    let second = ctx
+        .run_cancel
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    assert!(!second.is_cancelled());
 }

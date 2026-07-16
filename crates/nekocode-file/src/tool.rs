@@ -3,7 +3,7 @@ use std::sync::Arc;
 use nekocode_entities::thread::Thread;
 use nekocode_types::tool::{Tool, ToolError};
 
-use crate::config::FileConfig;
+use crate::config::{FileConfig, ResolvedFile};
 
 /// Read a file's text content, optionally restricted to a 1-based inclusive
 /// line range. Useful for paging large files without pulling the whole thing
@@ -42,16 +42,17 @@ impl Tool for ReadFileTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let path = parse_path(&params, &self.config)?;
-        let content = tokio::fs::read_to_string(&path)
-            .await
-            .map_err(|e| ToolError::ExecutionError(format!("Failed to read {}: {e}", path.display())))?;
+        let display_path = path.display_path().to_path_buf();
+        let content = read_text(path).await.map_err(|e| {
+            ToolError::ExecutionError(format!("Failed to read {}: {e}", display_path.display()))
+        })?;
 
-        let resolved = match (parse_optional_u64(&params, "start_line"), parse_optional_u64(&params, "end_line")) {
+        let resolved = match (
+            parse_optional_u64(&params, "start_line"),
+            parse_optional_u64(&params, "end_line"),
+        ) {
             (Some(start), Some(end)) => {
                 if start == 0 || end < start {
                     return Err(ToolError::InvalidParameters(format!(
@@ -74,7 +75,8 @@ impl Tool for ReadFileTool {
                 // 1-based inclusive range. Lines past EOF simply contribute nothing.
                 let start = start as usize;
                 let end = end as usize;
-                let mut out: Vec<&str> = Vec::with_capacity(end.saturating_sub(start).saturating_add(1));
+                let mut out: Vec<&str> =
+                    Vec::with_capacity(end.saturating_sub(start).saturating_add(1));
                 for (i, line) in content.lines().enumerate() {
                     let line_no = i + 1;
                     if line_no > end {
@@ -89,7 +91,7 @@ impl Tool for ReadFileTool {
         };
 
         Ok(serde_json::json!({
-            "path": path.to_string_lossy(),
+            "path": display_path.to_string_lossy(),
             "content": content,
         }))
     }
@@ -125,31 +127,21 @@ impl Tool for WriteFileTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let path = parse_path(&params, &self.config)?;
+        let display_path = path.display_path().to_path_buf();
         let content = params
             .get("content")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParameters("Missing 'content' parameter".into()))?;
 
-        if let Some(parent) = path.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| ToolError::ExecutionError(format!("Failed to create parent dirs for {}: {e}", path.display())))?;
-        }
-
         let bytes = content.len();
-        tokio::fs::write(&path, content)
-            .await
-            .map_err(|e| ToolError::ExecutionError(format!("Failed to write {}: {e}", path.display())))?;
+        write_text(path, content.to_string()).await.map_err(|e| {
+            ToolError::ExecutionError(format!("Failed to write {}: {e}", display_path.display()))
+        })?;
 
         Ok(serde_json::json!({
-            "path": path.to_string_lossy(),
+            "path": display_path.to_string_lossy(),
             "bytes_written": bytes,
         }))
     }
@@ -195,11 +187,9 @@ impl Tool for EditFileTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let path = parse_path(&params, &self.config)?;
+        let display_path = path.display_path().to_path_buf();
         let old_string = params
             .get("old_string")
             .and_then(|v| v.as_str())
@@ -218,21 +208,21 @@ impl Tool for EditFileTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let content = tokio::fs::read_to_string(&path)
-            .await
-            .map_err(|e| ToolError::ExecutionError(format!("Failed to read {}: {e}", path.display())))?;
+        let content = read_text(path.clone()).await.map_err(|e| {
+            ToolError::ExecutionError(format!("Failed to read {}: {e}", display_path.display()))
+        })?;
 
         let count = content.matches(old_string).count();
         if count == 0 {
             return Err(ToolError::ExecutionError(format!(
                 "old_string was not found in {}. Make sure it matches exactly, including whitespace and indentation.",
-                path.display()
+                display_path.display()
             )));
         }
         if count > 1 && !replace_all {
             return Err(ToolError::ExecutionError(format!(
                 "old_string occurs {count} times in {}. Provide more context to make it unique, or set replace_all to true.",
-                path.display()
+                display_path.display()
             )));
         }
 
@@ -246,12 +236,12 @@ impl Tool for EditFileTool {
             buf
         };
 
-        tokio::fs::write(&path, &new_content)
-            .await
-            .map_err(|e| ToolError::ExecutionError(format!("Failed to write {}: {e}", path.display())))?;
+        write_text(path, new_content).await.map_err(|e| {
+            ToolError::ExecutionError(format!("Failed to write {}: {e}", display_path.display()))
+        })?;
 
         Ok(serde_json::json!({
-            "path": path.to_string_lossy(),
+            "path": display_path.to_string_lossy(),
             "replacements_made": if replace_all { count } else { 1 },
         }))
     }
@@ -259,16 +249,92 @@ impl Tool for EditFileTool {
 
 /// Resolve the `path` parameter against the configured working directory and
 /// verify it stays within the sandbox boundary.
-fn parse_path(params: &serde_json::Value, config: &FileConfig) -> Result<std::path::PathBuf, ToolError> {
+fn parse_path(params: &serde_json::Value, config: &FileConfig) -> Result<ResolvedFile, ToolError> {
     let raw = params
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| ToolError::InvalidParameters("Missing 'path' parameter".into()))?;
-    config.resolve_and_check(raw).map_err(ToolError::InvalidParameters)
+    config
+        .resolve_for_io(raw)
+        .map_err(ToolError::InvalidParameters)
+}
+
+async fn read_text(path: ResolvedFile) -> std::io::Result<String> {
+    tokio::task::spawn_blocking(move || match path {
+        ResolvedFile::Ambient(path) => std::fs::read_to_string(path),
+        ResolvedFile::Sandboxed { base, relative, .. } => {
+            let dir = cap_std::fs::Dir::open_ambient_dir(base, cap_std::ambient_authority())?;
+            dir.read_to_string(relative)
+        }
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+
+async fn write_text(path: ResolvedFile, content: String) -> std::io::Result<()> {
+    tokio::task::spawn_blocking(move || match path {
+        ResolvedFile::Ambient(path) => {
+            if let Some(parent) = path.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, content)
+        }
+        ResolvedFile::Sandboxed { base, relative, .. } => {
+            let dir = cap_std::fs::Dir::open_ambient_dir(base, cap_std::ambient_authority())?;
+            if let Some(parent) = relative.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                dir.create_dir_all(parent)?;
+            }
+            dir.write(relative, content)
+        }
+    })
+    .await
+    .map_err(std::io::Error::other)?
 }
 
 fn parse_optional_u64(params: &serde_json::Value, key: &str) -> Option<u64> {
     params.get(key).and_then(|v| v.as_u64())
+}
+
+#[cfg(all(test, unix))]
+mod sandbox_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    #[tokio::test]
+    async fn write_rejects_symlink_escape() {
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let root =
+            std::env::temp_dir().join(format!("nekocode_cap_sandbox_{}_{}", std::process::id(), n));
+        let outside =
+            std::env::temp_dir().join(format!("nekocode_cap_outside_{}_{}", std::process::id(), n));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, root.join("escape")).unwrap();
+
+        let tool = WriteFileTool {
+            config: Arc::new(FileConfig {
+                working_directory: Some(root.to_string_lossy().into_owned()),
+            }),
+        };
+        let result = tool
+            .call(serde_json::json!({
+                "path": "escape/leaked.txt",
+                "content": "must stay sandboxed"
+            }))
+            .await;
+
+        assert!(result.is_err());
+        assert!(!outside.join("leaked.txt").exists());
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&outside).ok();
+    }
 }
 
 /// Set the current thread's title. The model is encouraged to call this
@@ -306,10 +372,7 @@ impl Tool for SetTitleTool {
         }
     }
 
-    async fn call(
-        &self,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
+    async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let raw = params
             .get("title")
             .and_then(|v| v.as_str())
@@ -365,9 +428,7 @@ mod set_title_tests {
     /// Validates the toasty call shape against a real DB.
     #[tokio::test]
     async fn set_title_updates_thread_row() {
-        let mut db = prepare_db(test_db_path())
-            .await
-            .expect("prepare_db");
+        let mut db = prepare_db(test_db_path()).await.expect("prepare_db");
         let thread = toasty::create!(Thread {
             working_directory: "/tmp".to_string(),
             model: "default".to_string(),
@@ -397,9 +458,7 @@ mod set_title_tests {
 
     #[tokio::test]
     async fn set_title_rejects_empty() {
-        let mut db = prepare_db(test_db_path())
-            .await
-            .expect("prepare_db");
+        let mut db = prepare_db(test_db_path()).await.expect("prepare_db");
         let thread = toasty::create!(Thread {
             working_directory: "/tmp".to_string(),
             model: "default".to_string(),
@@ -411,9 +470,16 @@ mod set_title_tests {
             db: db.clone(),
             thread_id: thread.id,
         };
-        for bad in [serde_json::json!({}), serde_json::json!({ "title": "" }), serde_json::json!({ "title": "   " })] {
+        for bad in [
+            serde_json::json!({}),
+            serde_json::json!({ "title": "" }),
+            serde_json::json!({ "title": "   " }),
+        ] {
             let err = tool.call(bad).await.expect_err("must reject");
-            assert!(matches!(err, ToolError::InvalidParameters(_)), "got {err:?}");
+            assert!(
+                matches!(err, ToolError::InvalidParameters(_)),
+                "got {err:?}"
+            );
         }
     }
 }

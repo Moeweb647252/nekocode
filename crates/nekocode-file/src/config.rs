@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 /// Typed configuration for the `tool` middleware. Deserialized from the
 /// per-thread `Middleware.config` JSON column (`{}` by default). Mirrors the
@@ -11,6 +11,25 @@ pub struct FileConfig {
     /// paths resolve against the server's current directory.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ResolvedFile {
+    Ambient(PathBuf),
+    Sandboxed {
+        base: PathBuf,
+        relative: PathBuf,
+        display: PathBuf,
+    },
+}
+
+impl ResolvedFile {
+    pub(crate) fn display_path(&self) -> &Path {
+        match self {
+            Self::Ambient(path) => path,
+            Self::Sandboxed { display, .. } => display,
+        }
+    }
 }
 
 impl FileConfig {
@@ -44,59 +63,53 @@ impl FileConfig {
         }
     }
 
-    /// Resolve a caller-supplied path and verify it stays within the configured
-    /// working directory (sandbox). Returns the resolved, canonicalized path on
-    /// success.
-    ///
-    /// When `working_directory` is set, the resolved path must be equal to or a
-    /// descendant of the (canonicalized) working directory after resolving `..`
-    /// and symlinks. When `working_directory` is not set, there is no sandbox
-    /// boundary to enforce, so the path is returned as-is after a best-effort
-    /// canonicalization.
-    ///
-    /// For paths that don't yet exist on disk (e.g. a file about to be written),
-    /// the parent directory is canonicalized instead and the check is applied
-    /// there.
-    pub fn resolve_and_check(&self, p: &str) -> Result<PathBuf, String> {
-        let resolved = self.resolve_path(p);
+    /// Resolve a path into either ambient access or a capability-relative path.
+    /// Sandboxed callers must perform I/O through `cap_std::fs::Dir`; returning
+    /// the relative path instead of an already-checked ambient path removes the
+    /// symlink-swap window between validation and open.
+    pub(crate) fn resolve_for_io(&self, p: &str) -> Result<ResolvedFile, String> {
         let Some(base) = &self.working_directory else {
-            // No sandbox configured — return the resolved path. Best-effort
-            // canonicalize; if the path doesn't exist, return it as-is.
-            return Ok(resolved.canonicalize().unwrap_or(resolved));
+            return Ok(ResolvedFile::Ambient(self.resolve_path(p)));
         };
         let base_canon = Path::new(base)
             .canonicalize()
             .map_err(|e| format!("working directory '{}' cannot be canonicalized: {e}", base))?;
-        // Try to canonicalize the resolved path. If it doesn't exist yet (e.g.
-        // write_file creating a new file), canonicalize the parent instead.
-        let checked = match resolved.canonicalize() {
-            Ok(canon) => canon,
-            Err(_) => {
-                // Path doesn't exist. Canonicalize the nearest existing ancestor.
-                let parent = resolved.parent();
-                match parent {
-                    Some(p) if !p.as_os_str().is_empty() => p
-                        .canonicalize()
-                        .map_err(|e| format!("parent path '{}' cannot be canonicalized: {e}", p.display()))?,
-                    _ => {
-                        return Err(format!(
-                            "path '{}' resolves outside the working directory '{}'",
-                            resolved.display(),
-                            base_canon.display()
-                        ));
-                    }
+        let input = Path::new(p);
+        let relative = if input.is_absolute() {
+            input.strip_prefix(&base_canon).map_err(|_| {
+                format!(
+                    "path '{}' is outside the working directory '{}'",
+                    input.display(),
+                    base_canon.display()
+                )
+            })?
+        } else {
+            input
+        };
+        let relative = relative.to_path_buf();
+        let mut depth = 0usize;
+        for component in relative.components() {
+            match component {
+                std::path::Component::Normal(_) => depth += 1,
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir if depth > 0 => depth -= 1,
+                std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_) => {
+                    return Err(format!(
+                        "path '{}' escapes the working directory '{}'",
+                        input.display(),
+                        base_canon.display()
+                    ));
                 }
             }
-        };
-        if checked == base_canon || checked.starts_with(&base_canon) {
-            Ok(resolved)
-        } else {
-            Err(format!(
-                "path '{}' is outside the working directory '{}'",
-                resolved.display(),
-                base_canon.display()
-            ))
         }
+        let display = base_canon.join(&relative);
+        Ok(ResolvedFile::Sandboxed {
+            base: base_canon,
+            relative,
+            display,
+        })
     }
 }
 
@@ -117,13 +130,19 @@ mod tests {
         let cfg = FileConfig {
             working_directory: Some("/srv/app".into()),
         };
-        assert_eq!(cfg.resolve_path("src/main.rs"), PathBuf::from("/srv/app/src/main.rs"));
+        assert_eq!(
+            cfg.resolve_path("src/main.rs"),
+            PathBuf::from("/srv/app/src/main.rs")
+        );
     }
 
     #[test]
     fn relative_path_without_working_directory_is_relative() {
         let cfg = FileConfig::default();
-        assert_eq!(cfg.resolve_path("src/main.rs"), PathBuf::from("src/main.rs"));
+        assert_eq!(
+            cfg.resolve_path("src/main.rs"),
+            PathBuf::from("src/main.rs")
+        );
     }
 
     #[test]
@@ -138,12 +157,12 @@ mod tests {
             working_directory: Some("/srv/app".into()),
         };
         let v = cfg.to_value();
-        assert_eq!(
-            v,
-            serde_json::json!({ "workingDirectory": "/srv/app" })
-        );
+        assert_eq!(v, serde_json::json!({ "workingDirectory": "/srv/app" }));
         // Round-trip back through from_value preserves the field.
-        assert_eq!(FileConfig::from_value(&v).working_directory, cfg.working_directory);
+        assert_eq!(
+            FileConfig::from_value(&v).working_directory,
+            cfg.working_directory
+        );
     }
 
     #[test]
@@ -179,7 +198,7 @@ mod tests {
         // Existing file within sandbox.
         let file_path = dir.join("test.txt");
         std::fs::write(&file_path, "ok").unwrap();
-        let result = cfg.resolve_and_check("test.txt");
+        let result = cfg.resolve_for_io("test.txt");
         assert!(result.is_ok(), "expected Ok, got {:?}", result);
     }
 
@@ -189,8 +208,11 @@ mod tests {
         let cfg = FileConfig {
             working_directory: Some(dir.to_string_lossy().to_string()),
         };
-        let result = cfg.resolve_and_check("/etc/passwd");
-        assert!(result.is_err(), "expected rejection for absolute path outside sandbox");
+        let result = cfg.resolve_for_io("/etc/passwd");
+        assert!(
+            result.is_err(),
+            "expected rejection for absolute path outside sandbox"
+        );
     }
 
     #[test]
@@ -199,8 +221,11 @@ mod tests {
         let cfg = FileConfig {
             working_directory: Some(dir.to_string_lossy().to_string()),
         };
-        let result = cfg.resolve_and_check("../../etc/passwd");
-        assert!(result.is_err(), "expected rejection for .. traversal outside sandbox");
+        let result = cfg.resolve_for_io("../../etc/passwd");
+        assert!(
+            result.is_err(),
+            "expected rejection for .. traversal outside sandbox"
+        );
     }
 
     #[test]
@@ -210,15 +235,23 @@ mod tests {
             working_directory: Some(dir.to_string_lossy().to_string()),
         };
         // "new_file.txt" doesn't exist, but the parent (working directory) does.
-        let result = cfg.resolve_and_check("new_file.txt");
-        assert!(result.is_ok(), "expected Ok for new file in existing parent, got {:?}", result);
+        let result = cfg.resolve_for_io("new_file.txt");
+        assert!(
+            result.is_ok(),
+            "expected Ok for new file in existing parent, got {:?}",
+            result
+        );
     }
 
     #[test]
     fn sandbox_no_working_directory_allows_anything() {
         let cfg = FileConfig::default();
         // Without a working directory, any path is allowed.
-        let result = cfg.resolve_and_check("/etc/hosts");
-        assert!(result.is_ok(), "expected Ok without sandbox, got {:?}", result);
+        let result = cfg.resolve_for_io("/etc/hosts");
+        assert!(
+            result.is_ok(),
+            "expected Ok without sandbox, got {:?}",
+            result
+        );
     }
 }

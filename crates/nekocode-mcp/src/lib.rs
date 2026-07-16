@@ -75,9 +75,10 @@ impl McpMiddleware {
 pub async fn probe(config: &McpConfig) -> anyhow::Result<Vec<client::McpToolInfo>> {
     let client = match config.transport {
         crate::config::Transport::Http => {
-            let url = config.server_url.clone().ok_or_else(|| {
-                anyhow::anyhow!("no serverUrl configured for http transport")
-            })?;
+            let url = config
+                .server_url
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("no serverUrl configured for http transport"))?;
             McpClient::connect_http(url, config.auth_headers.clone())
         }
         crate::config::Transport::Stdio => {
@@ -112,7 +113,13 @@ impl Middleware for McpMiddleware {
             }
         };
         for info in tools {
-            if !self.config.tools_enabled.get(&info.name).copied().unwrap_or(false) {
+            if !self
+                .config
+                .tools_enabled
+                .get(&info.name)
+                .copied()
+                .unwrap_or(false)
+            {
                 continue;
             }
             let tool = tool::McpTool {
@@ -122,6 +129,13 @@ impl Middleware for McpMiddleware {
                 input_schema: info.input_schema.clone(),
             };
             registry.insert(info.name, Arc::new(tool));
+        }
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> Result<(), anyhow::Error> {
+        if let Some(Some(client)) = self.client.get() {
+            client.kill().await;
         }
         Ok(())
     }

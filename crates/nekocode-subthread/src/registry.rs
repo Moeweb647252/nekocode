@@ -21,7 +21,10 @@ impl SubthreadRunState {
     /// "Ready" means the subthread has completed a `run_loop` and its message
     /// history is persisted and readable. `Idle` and `Running` are NOT ready.
     pub fn is_ready(&self) -> bool {
-        matches!(self, SubthreadRunState::Finished | SubthreadRunState::Error(_))
+        matches!(
+            self,
+            SubthreadRunState::Finished | SubthreadRunState::Error(_)
+        )
     }
 }
 
@@ -40,6 +43,7 @@ pub struct SubthreadState {
     pub run_state: SubthreadRunState,
     pub task_handle: Option<tokio::task::JoinHandle<()>>,
     pub notify: Arc<Notify>,
+    pub cancellation_token: tokio_util::sync::CancellationToken,
 }
 
 impl SubthreadState {
@@ -51,6 +55,7 @@ impl SubthreadState {
             run_state: SubthreadRunState::Idle,
             task_handle: None,
             notify: Arc::new(Notify::new()),
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
         }
     }
 }
@@ -76,7 +81,9 @@ impl SubthreadRegistry {
     /// by `spawn_subthread`; preserving an existing entry avoids resetting a
     /// run that is already in flight.
     pub fn insert_idle(&self, thread_id: u64) {
-        self.states.entry(thread_id).or_insert_with(|| SubthreadState::new(thread_id));
+        self.states
+            .entry(thread_id)
+            .or_insert_with(|| SubthreadState::new(thread_id));
     }
 
     /// Snapshot the run state of a subthread, defaulting to `Idle` if absent.
@@ -99,6 +106,7 @@ impl SubthreadRegistry {
                     let state = entry.get_mut();
                     state.run_state = SubthreadRunState::Running;
                     state.task_handle = None;
+                    state.cancellation_token = tokio_util::sync::CancellationToken::new();
                     true
                 }
             }
@@ -108,10 +116,20 @@ impl SubthreadRegistry {
                     run_state: SubthreadRunState::Running,
                     task_handle: None,
                     notify: Arc::new(Notify::new()),
+                    cancellation_token: tokio_util::sync::CancellationToken::new(),
                 });
                 true
             }
         }
+    }
+
+    pub fn cancellation_token(
+        &self,
+        thread_id: u64,
+    ) -> Option<tokio_util::sync::CancellationToken> {
+        self.states
+            .get(&thread_id)
+            .map(|state| state.cancellation_token.clone())
     }
 
     /// Associate the task handle with a previously reserved run. If the run
@@ -123,7 +141,10 @@ impl SubthreadRegistry {
         {
             state.task_handle = Some(task_handle);
         } else {
-            task_handle.abort();
+            // The reservation was removed after its cancellation token fired.
+            // Dropping the handle detaches only the cooperative cleanup task;
+            // aborting it here would bypass Agent cleanup.
+            drop(task_handle);
         }
     }
 
@@ -146,31 +167,46 @@ impl SubthreadRegistry {
         }
     }
 
-    /// Abort every running subthread's background task (best-effort) and clear
-    /// the registry. Used when the owning parent thread is deleted. Returns
-    /// the list of subthread ids that had in-flight tasks aborted, so callers
-    /// (cascade delete) can evict those subthreads from `active_threads`.
-    pub fn abort_all_and_clear(&self) -> Vec<u64> {
-        let mut aborted = Vec::new();
-        for entry in self.states.iter() {
-            if let Some(handle) = &entry.task_handle {
-                handle.abort();
-                aborted.push(entry.thread_id);
+    /// Cooperatively cancel every running subthread, wait for cleanup, and
+    /// clear the registry. A timed-out cleanup is force-aborted only after its
+    /// cancellation token has been delivered.
+    pub async fn abort_all_and_clear(&self) -> Vec<u64> {
+        let ids = self.all_thread_ids();
+        let mut states = Vec::with_capacity(ids.len());
+        for id in &ids {
+            if let Some((_, state)) = self.states.remove(id) {
+                state.cancellation_token.cancel();
+                states.push(state);
             }
         }
-        self.states.clear();
-        aborted
+        for state in states {
+            if let Some(mut handle) = state.task_handle
+                && tokio::time::timeout(std::time::Duration::from_secs(5), &mut handle)
+                    .await
+                    .is_err()
+            {
+                handle.abort();
+                let _ = handle.await;
+            }
+        }
+        ids
     }
 
     /// Remove a single subthread's entry from the registry. Aborts its
     /// background task if still running. Used by `delete_subthread` to drop
     /// the in-memory bookkeeping after the DB rows are gone. No-op if the
     /// subthread isn't tracked here.
-    pub fn remove(&self, thread_id: u64) {
-        if let Some((_, state)) = self.states.remove(&thread_id)
-            && let Some(handle) = state.task_handle
-        {
-            handle.abort();
+    pub async fn remove(&self, thread_id: u64) {
+        if let Some((_, state)) = self.states.remove(&thread_id) {
+            state.cancellation_token.cancel();
+            if let Some(mut handle) = state.task_handle
+                && tokio::time::timeout(std::time::Duration::from_secs(5), &mut handle)
+                    .await
+                    .is_err()
+            {
+                handle.abort();
+                let _ = handle.await;
+            }
         }
     }
 
@@ -237,12 +273,12 @@ mod tests {
         assert_eq!(ids, vec![1, 2]);
     }
 
-    #[test]
-    fn abort_all_and_clear_drops_entries() {
+    #[tokio::test]
+    async fn abort_all_and_clear_drops_entries() {
         let reg = SubthreadRegistry::new();
         reg.insert_idle(1);
         reg.insert_idle(2);
-        let _ = reg.abort_all_and_clear();
+        let _ = reg.abort_all_and_clear().await;
         // After clear, states are gone — run_state falls back to Idle.
         assert!(matches!(reg.run_state(1), SubthreadRunState::Idle));
         assert!(matches!(reg.run_state(2), SubthreadRunState::Idle));

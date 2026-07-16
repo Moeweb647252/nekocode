@@ -54,6 +54,7 @@ async fn main() {
         config: Arc::new(RwLock::new(config)),
         generate_states: Arc::new(dashmap::DashMap::new()),
         active_threads: Arc::new(dashmap::DashMap::new()),
+        thread_lifecycle: Arc::new(tokio::sync::Mutex::new(())),
     };
 
     let router = nekocode::build_router(app_state);

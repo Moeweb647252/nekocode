@@ -8,8 +8,8 @@
 //! relationship is persisted via `Thread.own_by_id`; in-memory run state lives
 //! in a shared `SubthreadRegistry`.
 
-pub mod controller;
 pub mod config;
+pub mod controller;
 pub mod middleware;
 pub mod path;
 pub mod registry;

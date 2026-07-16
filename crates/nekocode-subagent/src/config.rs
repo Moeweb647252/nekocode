@@ -62,7 +62,10 @@ mod tests {
 
     #[test]
     fn null_falls_back_to_default() {
-        assert_eq!(SubagentConfig::from_value(&serde_json::Value::Null).max_depth, 0);
+        assert_eq!(
+            SubagentConfig::from_value(&serde_json::Value::Null).max_depth,
+            0
+        );
     }
 
     #[test]

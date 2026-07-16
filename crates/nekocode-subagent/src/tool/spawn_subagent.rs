@@ -6,9 +6,9 @@ use nekocode_core::middleware::MiddlewareSpec;
 use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 use tokio::sync::mpsc;
 
+use crate::SubagentContext;
 use crate::middleware::SubagentMiddleware;
 use crate::runner::run_subagent;
-use crate::SubagentContext;
 
 /// The `spawn_subagent` tool: configures a single-turn child agent under a
 /// named profile (intersecting the profile's middlewares with the parent's
@@ -140,6 +140,12 @@ impl Tool for SpawnSubagentTool {
         // parent's full spec set, so the intersection gate holds at depth >= 2;
         // and pass the computed `working_directory` so the child catalog loads
         // from the right place.
+        let run_cancel = self
+            .ctx
+            .run_cancel
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let child_subagent_mw = SubagentMiddleware::new(
             selected_specs.clone(),
             self.ctx.factory.clone(),
@@ -147,14 +153,16 @@ impl Tool for SpawnSubagentTool {
             child_extensions.clone(),
             self.ctx.parent_db.clone(),
             working_directory.clone(),
-            crate::SubagentConfig { max_depth: self.ctx.max_depth },
+            crate::SubagentConfig {
+                max_depth: self.ctx.max_depth,
+            },
             self.ctx.depth + 1,
             profile.allow_nested,
         )
         // Re-point the child's run_cancel at the parent's so the whole spawn
         // tree shares one cancellation flag: the root's on_turn_end cancels
         // it once and every descendant run_subagent bails concurrently.
-        .with_run_cancel(self.ctx.run_cancel.clone());
+        .with_run_cancel(run_cancel.clone());
         child_middlewares.push(Box::new(child_subagent_mw));
 
         let child = Agent {
@@ -174,8 +182,6 @@ impl Tool for SpawnSubagentTool {
         let mev_tx = self.mev_tx.clone();
         let relay_target_agent_id = agent_id;
         let registry = self.ctx.registry.clone();
-        let run_cancel = self.ctx.run_cancel.clone();
-
         let handle = tokio::spawn(async move {
             let relay = tokio::spawn(async move {
                 while let Some(child_event) = child_rx.recv().await {
@@ -183,8 +189,7 @@ impl Tool for SpawnSubagentTool {
                         source: std::borrow::Cow::Borrowed("subagent"),
                         source_id: relay_target_agent_id,
                         event_type: "agentEvent".into(),
-                        data: serde_json::to_value(&child_event)
-                            .unwrap_or(serde_json::Value::Null),
+                        data: serde_json::to_value(&child_event).unwrap_or(serde_json::Value::Null),
                     };
                     // Parent stream may have closed: send failure just stops relaying.
                     let _ = mev_tx.send(mev);

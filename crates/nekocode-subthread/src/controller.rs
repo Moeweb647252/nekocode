@@ -28,22 +28,19 @@ pub trait ThreadController: Send + Sync {
     /// Activate `subthread_id` (build its `Agent` from its DB middlewares and
     /// insert into `active_threads`), returning the agent if newly activated.
     /// Mirrors the `activate_thread` API endpoint but programmatic.
-    async fn activate(&self, subthread_id: u64) -> Result<ActivationOutcome, anyhow::Error>;
+    async fn activate(
+        &self,
+        subthread_id: u64,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<ActivationOutcome, anyhow::Error>;
 
-    /// Remove `subthread_id` from `active_threads` (and `generate_states`).
-    /// Called when the background run completes or errors.
+    /// Shut down and remove `subthread_id` from `active_threads`. The run method
+    /// owns release of its GenerateState reservation.
     async fn deactivate(&self, subthread_id: u64);
 
-    /// Run `agent.run_loop(prompt, sink)` to completion. The API layer owns
-    /// the `Agent` type, so it owns the call site; the subthread crate just
-    /// needs to await the result and react to Ok/Err. The `sink` is provided
-    /// by the caller (subthread crate) so it can discard events.
-    async fn run(
-        &self,
-        agent: Arc<Agent>,
-        prompt: String,
-        sink: nekocode_core::agent::AgentEventSink,
-    ) -> Result<(), anyhow::Error>;
+    /// Run `agent.run_loop(prompt)` to completion. The API layer publishes the
+    /// events and terminal result through the reserved GenerateState.
+    async fn run(&self, agent: Arc<Agent>, prompt: String) -> Result<(), anyhow::Error>;
 
     /// Delete `subthread_id` and all of its descendants recursively: abort any
     /// in-flight background tasks they own (via their per-parent

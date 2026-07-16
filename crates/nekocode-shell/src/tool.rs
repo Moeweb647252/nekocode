@@ -1,8 +1,7 @@
 use std::{
     process::Stdio,
     sync::{
-        Arc,
-        Mutex,
+        Arc, Mutex,
         atomic::{self, AtomicU32},
     },
     time::Duration,
@@ -26,7 +25,9 @@ struct OutputChunk {
 }
 
 fn lock_output(output: &Mutex<ShellOutput>) -> std::sync::MutexGuard<'_, ShellOutput> {
-    output.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    output
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Push a line into the bounded unread-output queue. The next reader is told
@@ -256,6 +257,7 @@ impl Tool for SpawnShellTool {
         let output = Arc::new(Mutex::new(ShellOutput::default()));
         let (input_tx, mut input_rx) = mpsc::unbounded_channel::<String>();
         let is_running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let done = Arc::new(tokio::sync::Notify::new());
         let cancellation_token = tokio_util::sync::CancellationToken::new();
 
         self.shell_states.insert(
@@ -268,6 +270,7 @@ impl Tool for SpawnShellTool {
                 input: input_tx,
                 cancellation_token: cancellation_token.clone(),
                 is_running: is_running.clone(),
+                done: done.clone(),
             },
         );
 
@@ -340,7 +343,6 @@ impl Tool for SpawnShellTool {
             // be dropped.
             stdin_task.abort();
 
-            is_running.store(false, atomic::Ordering::SeqCst);
             if let Some(status) = exit_status {
                 record_exit(&output, status.code());
                 push_output(
@@ -351,6 +353,9 @@ impl Tool for SpawnShellTool {
                 record_exit(&output, None);
                 push_output(&output, "[terminated]".to_string());
             }
+            // Publish completion only after final output and status are visible.
+            is_running.store(false, atomic::Ordering::SeqCst);
+            done.notify_waiters();
         });
 
         Ok(serde_json::json!({
@@ -572,18 +577,17 @@ impl Tool for WaitShellDoneTool {
             let done_state = match self.shell_states.get(&shell_id) {
                 Some(entry) => {
                     if !entry.is_running.load(atomic::Ordering::SeqCst) {
-                        Some((
-                            drain_output(&entry),
-                            exit_code(&entry.output),
-                        ))
+                        Some((drain_output(&entry), exit_code(&entry.output)))
                     } else {
                         None
                     }
                 }
-                None => return Err(ToolError::InvalidParameters(format!(
-                    "No shell with shell_id {}",
-                    shell_id
-                ))),
+                None => {
+                    return Err(ToolError::InvalidParameters(format!(
+                        "No shell with shell_id {}",
+                        shell_id
+                    )));
+                }
             };
             if let Some((tail, exit_code)) = done_state {
                 self.shell_states.remove(&shell_id);
@@ -641,18 +645,23 @@ fn parse_shell_id(params: &serde_json::Value) -> Result<u32, ToolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use serde_json::json;
+    use std::sync::Arc;
 
     /// Helper to build a default OnceShellTool.
     fn once_tool() -> OnceShellTool {
-        OnceShellTool { config: Arc::new(ShellConfig::default()) }
+        OnceShellTool {
+            config: Arc::new(ShellConfig::default()),
+        }
     }
 
     #[tokio::test]
     async fn echo_returns_stdout() {
         let tool = once_tool();
-        let result = tool.call(json!({"command": "echo hello world"})).await.unwrap();
+        let result = tool
+            .call(json!({"command": "echo hello world"}))
+            .await
+            .unwrap();
         assert_eq!(result["exit_code"], 0);
         let out = result["stdout"].as_str().unwrap_or("");
         assert!(out.trim().contains("hello world"), "stdout: {out:?}");
@@ -692,10 +701,12 @@ mod tests {
         let tool = once_tool();
         let spec = tool.spec();
         assert_eq!(spec.name, "shell");
-        assert!(spec.parameter_schema["required"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("command")));
+        assert!(
+            spec.parameter_schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("command"))
+        );
     }
 
     #[tokio::test]

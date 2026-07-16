@@ -47,13 +47,13 @@ pub async fn auth(State(mut state): State<AppState>, Json(payload): Json<Auth>) 
 mod tests {
     use super::*;
     use crate::api::auth_middleware_inner;
+    use axum::http::HeaderMap;
     use nekocode_entities::prepare_db;
     use nekocode_types::config::Config;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
     use tokio::sync::RwLock;
-    use axum::http::HeaderMap;
 
     static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -77,6 +77,7 @@ mod tests {
             config: Arc::new(RwLock::new(config)),
             generate_states: Arc::new(dashmap::DashMap::new()),
             active_threads: Arc::new(dashmap::DashMap::new()),
+            thread_lifecycle: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 

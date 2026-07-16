@@ -28,9 +28,7 @@ pub struct McpProbeToolInfo {
 /// Test an MCP server connection: connect, initialize, list tools, then
 /// disconnect. Returns the discovered tool list so the UI can populate the
 /// enabled-tools map. Does not modify any persisted state.
-pub async fn probe_mcp(
-    Json(payload): Json<ProbeMcp>,
-) -> ApiResult {
+pub async fn probe_mcp(Json(payload): Json<ProbeMcp>) -> ApiResult {
     let transport = match payload.transport.as_str() {
         "stdio" => nekocode_mcp::config::Transport::Stdio,
         "http" => nekocode_mcp::config::Transport::Http,
@@ -52,10 +50,7 @@ pub async fn probe_mcp(
     let tools = match nekocode_mcp::probe(&config).await {
         Ok(t) => t,
         Err(e) => {
-            return Err(ApiError::InvalidInput(format!(
-                "MCP probe failed: {}",
-                e
-            )));
+            return Err(ApiError::InvalidInput(format!("MCP probe failed: {}", e)));
         }
     };
     let items: Vec<McpProbeToolInfo> = tools

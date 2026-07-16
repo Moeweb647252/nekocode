@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 
-use crate::tool::{notify_any, parse_timeout, run_state_name};
 use crate::SubagentContext;
+use crate::tool::{notification_futures, notify_any, parse_timeout, run_state_name};
 
 /// The `wait_all_subagents` tool: blocks until every listed subagent (or, with
 /// no ids, all currently-running ones) reaches a terminal state, or until the
@@ -80,9 +80,11 @@ impl Tool for WaitAllSubagentsTool {
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(timeout_secs);
         loop {
-            let (ready, pending): (Vec<u64>, Vec<u64>) = ids.iter().partition(|id| {
-                self.ctx.registry.run_state(**id).is_ready()
-            });
+            let notifications =
+                notification_futures(ids.iter().filter_map(|id| self.ctx.registry.notify(*id)));
+            let (ready, pending): (Vec<u64>, Vec<u64>) = ids
+                .iter()
+                .partition(|id| self.ctx.registry.run_state(**id).is_ready());
             if pending.is_empty() {
                 let results: Vec<serde_json::Value> = ready
                     .iter()
@@ -106,18 +108,14 @@ impl Tool for WaitAllSubagentsTool {
                     "pending": pending,
                 }));
             }
-            let notifies: Vec<_> = ids
-                .iter()
-                .filter_map(|id| self.ctx.registry.notify(*id))
-                .collect();
             let sleep = tokio::time::sleep_until(deadline);
             tokio::pin!(sleep);
-            if notifies.is_empty() {
+            if notifications.is_empty() {
                 (&mut sleep).await;
             } else {
                 tokio::select! {
                     _ = sleep => {}
-                    _ = notify_any(&notifies) => {}
+                    _ = notify_any(notifications) => {}
                 }
             }
         }

@@ -45,7 +45,9 @@ impl From<Result<serde_json::Value, ToolError>> for ToolCallResultInner {
     fn from(value: Result<serde_json::Value, ToolError>) -> Self {
         match value {
             Ok(result) => ToolCallResultInner::Success { value: result },
-            Err(err) => ToolCallResultInner::Error { error: err.to_string() },
+            Err(err) => ToolCallResultInner::Error {
+                error: err.to_string(),
+            },
         }
     }
 }
@@ -211,13 +213,19 @@ mod tests {
 
         // Scalar success is rejected the same way.
         let ok_mode = serialize_old(OldToolCallResultInner::Success(json!("x")));
-        assert!(matches!(ok_mode, Ok(Err(_))), "scalar success should be rejected, got {ok_mode:?}");
+        assert!(
+            matches!(ok_mode, Ok(Err(_))),
+            "scalar success should be rejected, got {ok_mode:?}"
+        );
 
         // Object success, by contrast, merges its fields with the tag and
         // serializes fine — which is why a *successful* `shell` call (object
         // payload) did not trigger this, only error/scalar results did.
         let obj_mode = serialize_old(OldToolCallResultInner::Success(json!({"a": 1})));
-        assert!(matches!(obj_mode, Ok(Ok(_))), "object success should serialize, got {obj_mode:?}");
+        assert!(
+            matches!(obj_mode, Ok(Ok(_))),
+            "object success should serialize, got {obj_mode:?}"
+        );
     }
 
     /// The fix: struct variants give the tag a map to live in, so every result
@@ -228,7 +236,10 @@ mod tests {
             value: json!({"stdout": "hi", "stderr": "", "exit_code": 0}),
         };
         let s = serde_json::to_string(&ok).unwrap();
-        assert!(s.contains(r#""type":"success""#), "missing success tag in {s}");
+        assert!(
+            s.contains(r#""type":"success""#),
+            "missing success tag in {s}"
+        );
         assert!(s.contains(r#""value""#), "missing value field in {s}");
 
         // Scalars must also work now (the old form died here).
@@ -260,9 +271,18 @@ mod tests {
             },
         });
         let s = serde_json::to_string(&msg).unwrap();
-        assert!(s.contains(r#""type":"toolCallResult""#), "outer tag missing: {s}");
-        assert!(s.contains(r#""type":"error""#), "inner error tag missing: {s}");
-        assert!(s.contains("command timed out"), "error payload missing: {s}");
+        assert!(
+            s.contains(r#""type":"toolCallResult""#),
+            "outer tag missing: {s}"
+        );
+        assert!(
+            s.contains(r#""type":"error""#),
+            "inner error tag missing: {s}"
+        );
+        assert!(
+            s.contains("command timed out"),
+            "error payload missing: {s}"
+        );
 
         // Round-trips too (the DB reads it back this way).
         let back: MessageType = serde_json::from_str(&s).unwrap();

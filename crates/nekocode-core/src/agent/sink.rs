@@ -20,7 +20,10 @@ pub struct AgentEventSink {
 
 impl AgentEventSink {
     pub fn new(tx: UnboundedSender<AgentEvent>) -> Self {
-        Self { tx, index: Arc::new(AtomicUsize::new(0)) }
+        Self {
+            tx,
+            index: Arc::new(AtomicUsize::new(0)),
+        }
     }
 
     /// Allocate the next unique index and send. Fails only on client
@@ -53,9 +56,9 @@ mod tests {
         // Two producers sharing one sink via clone.
         let sink_b = sink.clone();
 
-        sink.send(turn_end()).unwrap();        // index 0
-        sink_b.send(turn_end()).unwrap();      // index 1
-        sink.send(turn_end()).unwrap();        // index 2
+        sink.send(turn_end()).unwrap(); // index 0
+        sink_b.send(turn_end()).unwrap(); // index 1
+        sink.send(turn_end()).unwrap(); // index 2
 
         let mut got = Vec::new();
         while let Ok(ev) = rx.try_recv() {

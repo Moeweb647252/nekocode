@@ -1,8 +1,5 @@
 use async_trait::async_trait;
-use nekocode_types::{
-    generate::MessageContent,
-    tool::ToolRegistry,
-};
+use nekocode_types::{generate::MessageContent, tool::ToolRegistry};
 
 use crate::types::{GenerateRequest, GenerateResponse};
 
@@ -28,6 +25,12 @@ pub struct MiddlewareSpec {
 
 #[async_trait]
 pub trait Middleware: Send + Sync {
+    /// Called exactly once at the start of each Agent turn. Middleware can use
+    /// this to renew per-turn state that was consumed during the prior cleanup.
+    async fn on_turn_start(&self) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
     async fn before_generate(
         &self,
         _: &mut GenerateRequest,
@@ -40,13 +43,25 @@ pub trait Middleware: Send + Sync {
         Ok(())
     }
 
-    async fn after_generate(&self, _: &GenerateResponse, _: &mut AgentControlFlow)
-        -> Result<(), anyhow::Error> { Ok(()) }
+    async fn after_generate(
+        &self,
+        _: &GenerateResponse,
+        _: &mut AgentControlFlow,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
 
     /// Called once at the end of the turn (both Ok and Err paths) before
     /// `run_loop` returns. Default is a no-op; middlewares that spawn
     /// detached work (e.g. subagent) override this to cascade-abort it.
     async fn on_turn_end(&self) -> Result<(), anyhow::Error> {
         Ok(())
+    }
+
+    /// Permanently shut down resources owned by this middleware before its
+    /// containing Agent is evicted. Persistent resources must not rely on Drop
+    /// for process or task cleanup.
+    async fn shutdown(&self) -> Result<(), anyhow::Error> {
+        self.on_turn_end().await
     }
 }

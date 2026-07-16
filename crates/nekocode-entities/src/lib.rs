@@ -30,14 +30,58 @@ pub async fn prepare_db(db_path: PathBuf) -> toasty::Result<Db> {
         std::fs::File::create(&db_path)?;
     }
     let mut db = Db::builder()
-        .models(toasty::models!(Message, Thread, Turn, Token, Middleware, Workspace))
+        .models(toasty::models!(
+            Message, Thread, Turn, Token, Middleware, Workspace
+        ))
         .connect(&format!("turso://{}", db_path.to_string_lossy()))
         .await?;
     if query!(Message LIMIT 1).exec(&mut db).await.is_err() {
         tracing::info!("Initializing database schema");
         db.push_schema().await?;
+    } else {
+        deduplicate_workspaces(&mut db).await?;
+        // Apply model changes (including new indexes) to existing databases.
+        db.push_schema().await?;
     }
+    backfill_thread_workspaces(&mut db).await?;
     Ok(db)
+}
+
+async fn deduplicate_workspaces(db: &mut Db) -> toasty::Result<()> {
+    let workspaces = match query!(Workspace ORDER BY .id ASC).exec(db).await {
+        Ok(workspaces) => workspaces,
+        Err(_) => return Ok(()),
+    };
+    let mut owners = std::collections::HashMap::<String, u64>::new();
+    for workspace in workspaces {
+        if let Some(owner_id) = owners.get(&workspace.working_directory).copied() {
+            let duplicate_id = workspace.id;
+            let mut update = query!(Thread FILTER .workspace_id == #duplicate_id).update();
+            update.set_workspace_id(Some(owner_id));
+            update.exec(db).await?;
+            query!(Workspace FILTER .id == #duplicate_id)
+                .delete()
+                .exec(db)
+                .await?;
+        } else {
+            owners.insert(workspace.working_directory, workspace.id);
+        }
+    }
+    Ok(())
+}
+
+async fn backfill_thread_workspaces(db: &mut Db) -> toasty::Result<()> {
+    let missing_workspace: Option<u64> = None;
+    let threads = query!(Thread FILTER .workspace_id == #missing_workspace)
+        .exec(db)
+        .await?;
+    for thread in threads {
+        let workspace = crate::workspace::find_or_create(db, &thread.working_directory).await?;
+        let mut update = query!(Thread FILTER .id == #(thread.id)).update();
+        update.set_workspace_id(Some(workspace.id));
+        update.exec(db).await?;
+    }
+    Ok(())
 }
 
 /// Serialize a Toasty [`Json<T>`] wrapper by forwarding to the inner `T`,

@@ -109,7 +109,11 @@ impl DeepSeek {
             .map_err(|e| ProviderError::Other(e.into()))?;
         let mut stream = OpenAIV1Stream::new(sse);
         let mut acc = ResponseAccumulator::new();
-        while let Some(event) = stream.next_event().await.map_err(|e| ProviderError::HttpError(e.to_string()))? {
+        while let Some(event) = stream
+            .next_event()
+            .await
+            .map_err(|e| ProviderError::HttpError(e.to_string()))?
+        {
             sender.send(event.clone()).ok();
             acc.ingest(&event);
         }
@@ -179,7 +183,11 @@ impl DeepSeek {
             .map_err(|e| ProviderError::Other(e.into()))?;
         let mut stream = AnthropicStream::new(sse);
         let mut acc = ResponseAccumulator::new();
-        while let Some(event) = stream.next_event().await.map_err(|e| ProviderError::HttpError(e.to_string()))? {
+        while let Some(event) = stream
+            .next_event()
+            .await
+            .map_err(|e| ProviderError::HttpError(e.to_string()))?
+        {
             sender.send(event.clone()).ok();
             acc.ingest(&event);
         }
@@ -194,11 +202,8 @@ impl DeepSeek {
     }
 
     fn build_anthropic_body(&self, request: &GenerateRequest) -> CreateMessageRequest {
-        let content: Vec<MessageParam> = request
-            .messages
-            .iter()
-            .map(to_anthropic_message)
-            .collect();
+        let content: Vec<MessageParam> =
+            request.messages.iter().map(to_anthropic_message).collect();
 
         let tools = build_anthropic_tools(request.tool_specs());
 
@@ -229,15 +234,15 @@ struct ResponseAccumulator {
 
 impl ResponseAccumulator {
     fn new() -> Self {
-        Self {
-            blocks: Vec::new(),
-        }
+        Self { blocks: Vec::new() }
     }
 
     fn ingest(&mut self, event: &ProviderEvent) {
         match event {
             ProviderEvent::Content(content) => match self.blocks.last_mut() {
-                Some(AssistantContentBlock::Text { content: existing, .. }) => {
+                Some(AssistantContentBlock::Text {
+                    content: existing, ..
+                }) => {
                     existing.push_str(content);
                 }
                 _ => self.blocks.push(AssistantContentBlock::Text {
@@ -247,8 +252,7 @@ impl ResponseAccumulator {
             },
             ProviderEvent::ReasoningContent(reasoning) => match self.blocks.last_mut() {
                 Some(AssistantContentBlock::Text {
-                    reasoning_content,
-                    ..
+                    reasoning_content, ..
                 }) => {
                     reasoning_content
                         .get_or_insert_with(String::new)
@@ -475,15 +479,17 @@ fn to_anthropic_message(msg: &MessageType) -> MessageParam {
             };
             MessageParam {
                 role: AnthropicRole::User,
-                content: MessageContentParam::Blocks(vec![ContentBlockParam::ToolResultBlockParam(
-                    crate::parser::anthropic::types::ToolResultBlockParam {
-                        tool_use_id: result.id.clone(),
-                        content: vec![crate::parser::anthropic::types::ContentBlock::TextBlock {
-                            text,
-                        }],
-                        is_error,
-                    },
-                )]),
+                content: MessageContentParam::Blocks(vec![
+                    ContentBlockParam::ToolResultBlockParam(
+                        crate::parser::anthropic::types::ToolResultBlockParam {
+                            tool_use_id: result.id.clone(),
+                            content: vec![
+                                crate::parser::anthropic::types::ContentBlock::TextBlock { text },
+                            ],
+                            is_error,
+                        },
+                    ),
+                ]),
             }
         }
     }
@@ -510,7 +516,10 @@ mod tests {
             &message.blocks[0],
             AssistantContentBlock::Text { content, .. } if content == "before"
         ));
-        assert!(matches!(message.blocks[1], AssistantContentBlock::ToolCall(_)));
+        assert!(matches!(
+            message.blocks[1],
+            AssistantContentBlock::ToolCall(_)
+        ));
         assert!(matches!(
             &message.blocks[2],
             AssistantContentBlock::Text { content, .. } if content == "after"

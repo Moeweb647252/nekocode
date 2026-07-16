@@ -116,11 +116,8 @@ mod tests {
 
     #[test]
     fn load_missing_global_returns_empty_catalog() {
-        let cat = ProfileCatalog::load(
-            Path::new("/nonexistent/agents.toml"),
-            None,
-        )
-        .expect("missing global is ok");
+        let cat = ProfileCatalog::load(Path::new("/nonexistent/agents.toml"), None)
+            .expect("missing global is ok");
         assert!(cat.profiles.is_empty());
     }
 

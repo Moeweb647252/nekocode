@@ -23,6 +23,7 @@ pub async fn create_middleware(
     State(mut state): State<AppState>,
     Json(payload): Json<CreateMiddleware>,
 ) -> ApiResult {
+    let _lifecycle = state.thread_lifecycle.lock().await;
     let _thread = toasty::query!(Thread FILTER .id == #(payload.thread_id))
         .first()
         .exec(&mut state.db)
@@ -45,7 +46,7 @@ pub async fn create_middleware(
     .await?;
 
     // Evict the cached agent so the next activation picks up the new middleware.
-    state.active_threads.remove(&payload.thread_id);
+    crate::api::thread::shutdown_and_remove_agent(&state.active_threads, payload.thread_id).await;
 
     ApiResponse::ok(MiddlewareResponse {
         id: created.id,

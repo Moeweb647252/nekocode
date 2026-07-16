@@ -57,9 +57,7 @@ impl ApiError {
         match self {
             ApiError::Unauthorized => StatusCode::UNAUTHORIZED,
             ApiError::ThreadNotActivated => StatusCode::CONFLICT,
-            ApiError::ThreadAlreadyActivated | ApiError::ThreadGenerating => {
-                StatusCode::CONFLICT
-            }
+            ApiError::ThreadAlreadyActivated | ApiError::ThreadGenerating => StatusCode::CONFLICT,
             ApiError::ItemNotFound(_) => StatusCode::NOT_FOUND,
             ApiError::InvalidInput(_) => StatusCode::BAD_REQUEST,
             ApiError::SerializationError(_) => StatusCode::BAD_REQUEST,

@@ -9,7 +9,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use nekocode_types::{
-    generate::{AssistantMessage, AssistantContentBlock, MessageContent, StopReason, Usage},
+    generate::{AssistantContentBlock, AssistantMessage, MessageContent, StopReason, Usage},
     tool::{Tool, ToolCall, ToolRegistry, ToolSpec},
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -46,7 +46,9 @@ impl Provider for MockProvider {
 
         for block in &msg.blocks {
             if let AssistantContentBlock::Text { content, .. } = block {
-                sender.send(ProviderEvent::Content(content.clone())).unwrap();
+                sender
+                    .send(ProviderEvent::Content(content.clone()))
+                    .unwrap();
             }
             if let AssistantContentBlock::ToolCall(tc) = block {
                 sender.send(ProviderEvent::ToolCall(tc.clone())).unwrap();

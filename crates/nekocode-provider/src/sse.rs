@@ -29,7 +29,8 @@ pub(crate) enum EventError {
 }
 
 /// Represents a stream of Server-Sent Events.
-pub(crate) type ServerSentEvents = Pin<Box<dyn Stream<Item = Result<Event, EventSourceError>> + Send>>;
+pub(crate) type ServerSentEvents =
+    Pin<Box<dyn Stream<Item = Result<Event, EventSourceError>> + Send>>;
 
 /// The `text/event-stream` MIME type bytes, used to verify a response carries
 /// an SSE payload.

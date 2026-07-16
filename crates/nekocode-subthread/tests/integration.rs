@@ -43,7 +43,11 @@ impl nekocode_core::provider::Provider for UnusedProvider {
 
 #[async_trait::async_trait]
 impl ThreadController for NoopController {
-    async fn activate(&self, _: u64) -> Result<ActivationOutcome, anyhow::Error> {
+    async fn activate(
+        &self,
+        _: u64,
+        _: tokio_util::sync::CancellationToken,
+    ) -> Result<ActivationOutcome, anyhow::Error> {
         // The variant now carries an Arc<Agent>; we never run this agent in
         // these tests, so a minimal placeholder is fine.
         Ok(ActivationOutcome::AlreadyActivated(std::sync::Arc::new(
@@ -62,7 +66,6 @@ impl ThreadController for NoopController {
         &self,
         _: Arc<nekocode_core::agent::Agent>,
         _: String,
-        _: nekocode_core::agent::AgentEventSink,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -321,7 +324,7 @@ async fn cascade_delete_removes_subthreads() {
 
     // Emulate the API-layer cascade: abort the parent's subthread tasks via
     // its per-parent registry, then delete the rows.
-    let _ = registry.abort_all_and_clear();
+    let _ = registry.abort_all_and_clear().await;
     let mut tx = db.transaction().await.expect("tx");
     for turn in toasty::query!(nekocode_entities::turn::Turn FILTER .thread_id == #sub_id)
         .exec(&mut tx)
@@ -512,5 +515,8 @@ async fn delete_subthread_rejects_foreign_subthread() {
         .exec(&mut db3)
         .await
         .expect("query");
-    assert!(row.is_some(), "foreign subthread must survive refused delete");
+    assert!(
+        row.is_some(),
+        "foreign subthread must survive refused delete"
+    );
 }

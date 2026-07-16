@@ -1,8 +1,8 @@
 use nekocode_types::generate::{AssistantContentBlock, MessageType};
 use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 
-use crate::tool::parse_agent_id;
 use crate::SubagentContext;
+use crate::tool::parse_agent_id;
 
 /// The `read_subagent` tool: returns a finished subagent's captured result —
 /// by default only the last assistant text, or the full message list when
@@ -56,11 +56,9 @@ impl Tool for ReadSubagentTool {
                 state.name()
             )));
         }
-        let result = self
-            .ctx
-            .registry
-            .result(agent_id)
-            .ok_or_else(|| ToolError::ExecutionError(format!("agent {} has no result", agent_id)))?;
+        let result = self.ctx.registry.result(agent_id).ok_or_else(|| {
+            ToolError::ExecutionError(format!("agent {} has no result", agent_id))
+        })?;
 
         let mut out = if text_only {
             let text = last_assistant_text(&result.messages).unwrap_or_default();
@@ -89,9 +87,10 @@ impl Tool for ReadSubagentTool {
 /// Concatenate the text blocks of the last assistant message. Returns None
 /// if there is no assistant message or it has no text blocks.
 fn last_assistant_text(messages: &[nekocode_types::generate::Message]) -> Option<String> {
-    let last = messages.iter().rev().find(|m| {
-        matches!(m.data, MessageType::Assistant(_))
-    })?;
+    let last = messages
+        .iter()
+        .rev()
+        .find(|m| matches!(m.data, MessageType::Assistant(_)))?;
     if let MessageType::Assistant(a) = &last.data {
         let texts: Vec<&str> = a
             .blocks

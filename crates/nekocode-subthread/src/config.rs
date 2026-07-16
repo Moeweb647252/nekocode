@@ -55,7 +55,9 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let cfg = SubthreadConfig { allow_subthread: true };
+        let cfg = SubthreadConfig {
+            allow_subthread: true,
+        };
         let v = cfg.to_value();
         let back = SubthreadConfig::from_value(&v);
         assert!(back.allow_subthread);

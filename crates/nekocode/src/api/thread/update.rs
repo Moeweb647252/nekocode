@@ -15,6 +15,11 @@ pub async fn update_thread(
     // to swap it mid-generation and evict the cached agent so the next
     // activation rebuilds it with the new provider.
     let changes_model = payload.model.is_some();
+    let _lifecycle = if changes_model {
+        Some(state.thread_lifecycle.lock().await)
+    } else {
+        None
+    };
     if changes_model && state.generate_states.contains_key(&payload.id) {
         return Err(ApiError::ThreadGenerating);
     }
@@ -27,7 +32,7 @@ pub async fn update_thread(
     }
     update.exec(&mut state.db).await?;
     if changes_model {
-        state.active_threads.remove(&payload.id);
+        super::shutdown_and_remove_agent(&state.active_threads, payload.id).await;
     }
     ApiResponse::ok(())
 }

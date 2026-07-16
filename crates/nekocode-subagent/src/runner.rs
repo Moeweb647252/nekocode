@@ -16,10 +16,9 @@ use crate::registry::{SubagentRegistry, SubagentRunResult};
 ///   observes it concurrently — this is what makes cross-depth cascade
 ///   reliable instead of best-effort.
 ///
-/// On either cancellation the child's own middlewares' `on_turn_end` is driven
-/// explicitly (the dropped `run` future wouldn't run run_loop's end-of-turn
-/// dispatch), so the child's own spawned descendants get cascade-aborted.
-/// `old_turns` is always empty (single-turn).
+/// Both signals are combined into the cancellation token passed through the
+/// Agent run loop, so provider tasks and middleware cleanup complete before the
+/// runner returns. `old_turns` is always empty (single-turn).
 pub async fn run_subagent(
     agent_id: u64,
     child: Agent,
@@ -29,36 +28,33 @@ pub async fn run_subagent(
     cancel: tokio_util::sync::CancellationToken,
     run_cancel: tokio_util::sync::CancellationToken,
 ) {
-    let run = child.run_loop(
-        vec![MessageContent::Text { content: prompt }],
-        Vec::new(),
-        sink,
-    );
-    let result = tokio::select! {
-        biased;
-        // Per-state abort (abort_subagent / abort_all_and_clear on this child).
-        _ = cancel.cancelled() => {
-            for mw in child.middlewares.iter() {
-                let _ = mw.on_turn_end().await;
-            }
-            registry.set_error(agent_id, "subagent cancelled".into());
-            return;
+    let combined = tokio_util::sync::CancellationToken::new();
+    let combined_for_relay = combined.clone();
+    let cancel_relay = tokio::spawn(async move {
+        tokio::select! {
+            _ = cancel.cancelled() => {}
+            _ = run_cancel.cancelled() => {}
         }
-        // Whole-tree cancellation (parent turn ended). Same cleanup; every
-        // sibling and descendant sees the same flag concurrently.
-        _ = run_cancel.cancelled() => {
-            for mw in child.middlewares.iter() {
-                let _ = mw.on_turn_end().await;
-            }
-            registry.set_error(agent_id, "subagent cancelled by parent turn end".into());
-            return;
-        }
-        r = run => r,
-    };
+        combined_for_relay.cancel();
+    });
+    let result = child
+        .run_loop_with_cancellation(
+            vec![MessageContent::Text { content: prompt }],
+            Vec::new(),
+            sink,
+            combined,
+        )
+        .await;
+    cancel_relay.abort();
     match result {
-        Ok(turn) => registry.set_finished(agent_id, SubagentRunResult {
-            usage: turn.usage, messages: turn.messages, finished: turn.finished,
-        }),
+        Ok(turn) => registry.set_finished(
+            agent_id,
+            SubagentRunResult {
+                usage: turn.usage,
+                messages: turn.messages,
+                finished: turn.finished,
+            },
+        ),
         Err(_partial) => registry.set_error(agent_id, "subagent run_loop failed".into()),
     }
 }
@@ -70,9 +66,7 @@ mod tests {
 
     use nekocode_core::extensions::Extensions;
     use nekocode_core::provider::{Provider, ProviderError, ProviderEvent, ProviderResponse};
-    use nekocode_types::generate::{
-        AssistantContentBlock, AssistantMessage, StopReason, Usage,
-    };
+    use nekocode_types::generate::{AssistantContentBlock, AssistantMessage, StopReason, Usage};
     use tokio::sync::mpsc;
 
     /// A local mock provider returning a scripted sequence of assistant
@@ -86,7 +80,9 @@ mod tests {
         fn new(responses: Vec<AssistantMessage>) -> Self {
             let mut r = responses;
             r.reverse(); // pop() is LIFO; reverse once for FIFO
-            Self { responses: Mutex::new(r) }
+            Self {
+                responses: Mutex::new(r),
+            }
         }
     }
 
@@ -114,10 +110,14 @@ mod tests {
                 .ok_or_else(|| ProviderError::Other(anyhow::anyhow!("mock exhausted")))?;
             for block in &msg.blocks {
                 if let AssistantContentBlock::Text { content, .. } = block {
-                    sender.send(ProviderEvent::Content(content.clone())).unwrap();
+                    sender
+                        .send(ProviderEvent::Content(content.clone()))
+                        .unwrap();
                 }
             }
-            sender.send(ProviderEvent::MessageEnd(StopReason::Stop)).unwrap();
+            sender
+                .send(ProviderEvent::MessageEnd(StopReason::Stop))
+                .unwrap();
             Ok(ProviderResponse {
                 message: msg,
                 usage: Usage {
@@ -140,7 +140,9 @@ mod tests {
             std::process::id(),
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        let db = nekocode_entities::prepare_db(path).await.expect("prepare_db");
+        let db = nekocode_entities::prepare_db(path)
+            .await
+            .expect("prepare_db");
         Agent {
             thread_id: 0,
             working_directory: "/tmp".into(),
@@ -167,7 +169,10 @@ mod tests {
             tokio_util::sync::CancellationToken::new(),
         )
         .await;
-        assert!(matches!(registry.run_state(id), crate::registry::SubagentRunState::Finished));
+        assert!(matches!(
+            registry.run_state(id),
+            crate::registry::SubagentRunState::Finished
+        ));
         let result = registry.result(id).expect("result stored");
         assert!(result.finished);
         // The captured turn has user + assistant messages.
@@ -264,7 +269,13 @@ mod tests {
         .expect("both runs ended promptly after the shared run_cancel fired");
 
         // Each recorded an error (the run_cancel branch's set_error).
-        assert!(matches!(reg_a.run_state(id_a), crate::registry::SubagentRunState::Error(_)));
-        assert!(matches!(reg_b.run_state(id_b), crate::registry::SubagentRunState::Error(_)));
+        assert!(matches!(
+            reg_a.run_state(id_a),
+            crate::registry::SubagentRunState::Error(_)
+        ));
+        assert!(matches!(
+            reg_b.run_state(id_b),
+            crate::registry::SubagentRunState::Error(_)
+        ));
     }
 }
