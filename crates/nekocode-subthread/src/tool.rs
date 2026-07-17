@@ -5,7 +5,12 @@ use nekocode_entities::thread::Thread;
 use nekocode_types::tool::{Tool, ToolError};
 use toasty::Json;
 
-use crate::{config::SubthreadConfig, path::ensure_within, registry::SubthreadRegistry};
+use crate::{
+    config::SubthreadConfig,
+    controller::{CreateSubthreadRequest, SubthreadController},
+    path::ensure_within,
+    registry::SubthreadRegistry,
+};
 
 /// Shared context carried by every subthread tool. One instance lives behind
 /// an `Arc` inside `SubthreadMiddleware` and is cloned (cheaply — all fields
@@ -17,10 +22,9 @@ pub struct SubthreadContext {
     pub parent_working_directory: String,
     pub registry: Arc<SubthreadRegistry>,
     pub config: Arc<SubthreadConfig>,
-    /// Used by `set_subthread_settings` to evict a cached agent after a
-    /// config change, and by `start_subthread` to activate/run the subthread.
+    /// Owns persisted creation, execution, invalidation, and deletion.
     /// `None` in unit-test contexts.
-    pub controller: Option<Arc<dyn crate::controller::ThreadController>>,
+    pub controller: Option<Arc<dyn SubthreadController>>,
 }
 
 impl SubthreadContext {
@@ -114,126 +118,33 @@ impl Tool for SpawnSubthreadTool {
             ensure_within(parent, working_directory).map_err(ToolError::InvalidParameters)?;
         let working_directory = canon.to_string_lossy().to_string();
 
-        let mut db = self.ctx.db.clone();
-
-        // Resolve the parent's model so the subthread uses the same provider.
-        let parent_thread = toasty::query!(Thread FILTER .id == #(self.ctx.parent_thread_id))
-            .first()
-            .exec(&mut db)
-            .await
-            .map_err(|e| ToolError::ExecutionError(format!("Failed to query parent thread: {e}")))?
-            .ok_or_else(|| {
-                ToolError::ExecutionError(format!(
-                    "Parent thread {} not found",
-                    self.ctx.parent_thread_id
-                ))
-            })?;
-
-        // Subthreads belong to the same workspace as their parent even when
-        // their working directory is a nested path. Older rows may lack that
-        // link, so backfill the parent before creating the child.
-        let workspace_id = match parent_thread.workspace_id {
-            Some(id) => id,
-            None => {
-                let workspace = nekocode_entities::workspace::find_or_create(
-                    &mut db,
-                    &parent_thread.working_directory,
-                )
-                .await
-                .map_err(|e| {
-                    ToolError::ExecutionError(format!(
-                        "Failed to find/create parent workspace: {e}"
-                    ))
-                })?;
-                let mut update = toasty::query!(Thread FILTER .id == #(parent_thread.id)).update();
-                update.set_workspace_id(Some(workspace.id));
-                update.exec(&mut db).await.map_err(|e| {
-                    ToolError::ExecutionError(format!("Failed to link parent workspace: {e}"))
-                })?;
-                workspace.id
-            }
-        };
-
-        let subthread = toasty::create!(Thread {
-            working_directory: working_directory.clone(),
-            model: parent_thread.model.clone(),
-            workspace_id: Some(workspace_id),
-            own_by_id: Some(self.ctx.parent_thread_id),
-        })
-        .exec(&mut db)
-        .await
-        .map_err(|e| ToolError::ExecutionError(format!("Failed to create subthread: {e}")))?;
-
-        // Seed default middlewares: shell + tool scoped to the subthread's wd.
-        let shell_cfg = nekocode_shell_config_value(&working_directory);
-        toasty::create!(Middleware {
-            thread_id: subthread.id,
-            order_index: 100,
-            name: "shell".to_string(),
-            config: Json(shell_cfg),
-        })
-        .exec(&mut db)
-        .await
-        .map_err(|e| ToolError::ExecutionError(format!("Failed to seed shell middleware: {e}")))?;
-
-        let tool_cfg = nekocode_file_config_value(&working_directory);
-        toasty::create!(Middleware {
-            thread_id: subthread.id,
-            order_index: 200,
-            name: "tool".to_string(),
-            config: Json(tool_cfg),
-        })
-        .exec(&mut db)
-        .await
-        .map_err(|e| ToolError::ExecutionError(format!("Failed to seed tool middleware: {e}")))?;
-
-        // Optionally seed the subthread middleware so this subthread can spawn
-        // its own sub-subthreads. allow_subthread defaults to false inside the
-        // nested config to bound recursion depth.
-        if allow_subthread {
-            let sub_cfg = SubthreadConfig {
-                allow_subthread: false,
-            }
-            .to_value();
-            toasty::create!(Middleware {
-                thread_id: subthread.id,
-                order_index: 300,
-                name: "subthread".to_string(),
-                config: Json(sub_cfg),
+        let controller = self.ctx.controller.clone().ok_or_else(|| {
+            ToolError::ExecutionError(
+                "no subthread controller configured; cannot create subthread".into(),
+            )
+        })?;
+        let subthread = controller
+            .create(CreateSubthreadRequest {
+                parent_thread_id: self.ctx.parent_thread_id,
+                working_directory,
+                allow_subthread,
             })
-            .exec(&mut db)
             .await
-            .map_err(|e| {
-                ToolError::ExecutionError(format!("Failed to seed subthread middleware: {e}"))
+            .map_err(|error| {
+                ToolError::ExecutionError(format!("Failed to create subthread: {error}"))
             })?;
-        }
 
         // Track in-memory as Idle. The registry is per-parent (lives in this
         // parent's `Agent.extensions`), so the parent association is implicit
         // — no need to pass it.
-        self.ctx.registry.insert_idle(subthread.id);
+        self.ctx.registry.insert_idle(subthread.subthread_id);
 
         Ok(serde_json::json!({
-            "subthread_id": subthread.id,
-            "working_directory": working_directory,
-            "allow_subthread": allow_subthread,
+            "subthread_id": subthread.subthread_id,
+            "working_directory": subthread.working_directory,
+            "allow_subthread": subthread.allow_subthread,
         }))
     }
-}
-
-/// Build a `nekocode_shell::ShellConfig` JSON value for a subthread. Defined
-/// here (rather than depending on the shell crate) because the subthread crate
-/// must not depend on `nekocode-shell` — it only needs the JSON shape, which
-/// is `{ "workingDirectory": <wd> }`. Keeping the literal here avoids a
-/// cross-crate coupling that the spec doesn't require.
-fn nekocode_shell_config_value(working_directory: &str) -> serde_json::Value {
-    serde_json::json!({ "workingDirectory": working_directory })
-}
-
-/// Build a `nekocode_file::FileConfig` JSON value for a subthread. Same
-/// rationale as above.
-fn nekocode_file_config_value(working_directory: &str) -> serde_json::Value {
-    serde_json::json!({ "workingDirectory": working_directory })
 }
 
 /// List all subthreads of the current thread, enriched with in-memory run
@@ -662,7 +573,9 @@ impl Tool for SetSubthreadSettingsTool {
 
         // Evict any cached agent so the next start_subthread rebuilds it.
         if let Some(controller) = &self.ctx.controller {
-            controller.deactivate(subthread_id).await;
+            controller.invalidate(subthread_id).await.map_err(|error| {
+                ToolError::ExecutionError(format!("Failed to invalidate subthread: {error}"))
+            })?;
         }
 
         Ok(serde_json::json!({
@@ -741,40 +654,19 @@ impl Tool for StartSubthreadTool {
             .cancellation_token(subthread_id)
             .expect("try_start creates a cancellation token");
 
-        // Activate (build the agent, insert into active_threads) — or reuse the
-        // already-activated agent. `start_subthread`'s semantics are "start the
-        // agent run loop", so an already-activated (but not running) subthread
-        // is a valid reuse target, not an error. The only refusal happens
-        // earlier, when `run_state == Running`.
-        let agent = match controller
-            .activate(subthread_id, cancellation.clone())
-            .await
-        {
-            Ok(agent) => agent,
-            Err(e) => {
-                self.ctx.registry.set_error(subthread_id, e.to_string());
-                return Err(ToolError::ExecutionError(format!(
-                    "Failed to activate subthread: {e}"
-                )));
-            }
-        };
-        let agent = match agent {
-            crate::controller::ActivationOutcome::Activated(a)
-            | crate::controller::ActivationOutcome::AlreadyActivated(a) => a,
-        };
-
-        // Spawn the background run loop. The controller publishes events and a
-        // terminal result through the same GenerateState used by WebSockets.
+        // The controller owns reservation, Agent construction/reuse,
+        // persistence, terminalization, and shutdown as one operation.
         let registry = self.ctx.registry.clone();
         let controller_for_task = controller.clone();
         let handle = tokio::spawn(async move {
-            let result = controller_for_task.run(agent, prompt).await;
+            let result = controller_for_task
+                .run(subthread_id, prompt, cancellation)
+                .await;
 
             match result {
                 Ok(()) => registry.set_finished(subthread_id),
                 Err(e) => registry.set_error(subthread_id, e.to_string()),
             }
-            controller_for_task.deactivate(subthread_id).await;
         });
 
         self.ctx.registry.attach_task_handle(subthread_id, handle);
@@ -1105,12 +997,12 @@ impl Tool for DeleteSubthreadTool {
             )
         })?;
 
-        // The controller's delete_subthread handles the full cascade: abort
+        // The controller's delete handles the full cascade: abort
         // in-flight tasks (via each descendant's per-parent registry in
-        // Agent.extensions), evict from active_threads/generate_states, and
+        // Agent.extensions), evict runtime caches, and
         // delete DB rows in one transaction.
         controller
-            .delete_subthread(subthread_id)
+            .delete(subthread_id)
             .await
             .map_err(|e| ToolError::ExecutionError(format!("Failed to delete subthread: {e}")))?;
 

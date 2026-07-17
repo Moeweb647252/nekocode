@@ -16,10 +16,11 @@ pub struct WorkspaceResponse {
     pub threads: Vec<Thread>,
 }
 
-pub async fn list_workspaces(State(mut state): State<AppState>) -> ApiResult {
+pub async fn list_workspaces(State(state): State<AppState>) -> ApiResult {
+    let mut db = state.db();
     let workspaces = toasty::query!(Workspace)
         .include(Workspace::fields().threads())
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await?;
     let items = workspaces
         .into_iter()

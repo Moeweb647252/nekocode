@@ -1,9 +1,8 @@
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use clap::Parser;
 use nekocode::AppState;
 use nekocode_types::config::Config;
-use tokio::sync::RwLock;
 use tracing::info;
 
 #[derive(clap::Parser)]
@@ -49,13 +48,7 @@ async fn main() {
             .await
             .expect("Failed to bind TCP listener");
 
-    let app_state = AppState {
-        db,
-        config: Arc::new(RwLock::new(config)),
-        generate_states: Arc::new(dashmap::DashMap::new()),
-        active_threads: Arc::new(dashmap::DashMap::new()),
-        thread_lifecycle: Arc::new(tokio::sync::Mutex::new(())),
-    };
+    let app_state = AppState::new(db, config);
 
     let router = nekocode::build_router(app_state);
     axum::serve(listener, router)

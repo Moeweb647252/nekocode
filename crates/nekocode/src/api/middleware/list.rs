@@ -16,11 +16,12 @@ pub struct MiddlewareResponse {
 }
 
 pub async fn list_middlewares(
-    State(mut state): State<AppState>,
+    State(state): State<AppState>,
     Json(payload): Json<ListMiddlewares>,
 ) -> ApiResult {
+    let mut db = state.db();
     let rows = toasty::query!(Middleware FILTER .thread_id == #(payload.thread_id))
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await?;
     let middlewares: Vec<MiddlewareResponse> = rows
         .into_iter()

@@ -3,7 +3,6 @@
 //! `auth_middleware` layer is actually exercised end-to-end.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::body::Body;
@@ -11,7 +10,6 @@ use http::{Request, StatusCode};
 use nekocode::{AppState, build_router};
 use nekocode_entities::prepare_db;
 use nekocode_types::config::{AuthenticationConfig, Config};
-use tokio::sync::RwLock;
 use tower::ServiceExt;
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -27,13 +25,7 @@ async fn test_state(auth: AuthenticationConfig) -> AppState {
         auth,
         ..Default::default()
     };
-    AppState {
-        db,
-        config: Arc::new(RwLock::new(config)),
-        generate_states: Arc::new(dashmap::DashMap::new()),
-        active_threads: Arc::new(dashmap::DashMap::new()),
-        thread_lifecycle: Arc::new(tokio::sync::Mutex::new(())),
-    }
+    AppState::new(db, config)
 }
 
 #[tokio::test]

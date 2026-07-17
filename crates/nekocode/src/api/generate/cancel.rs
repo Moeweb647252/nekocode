@@ -12,11 +12,9 @@ pub async fn cancel_generation(
     State(state): State<AppState>,
     Json(payload): Json<CancelGeneration>,
 ) -> ApiResult {
-    let generation = state
-        .generate_states
-        .get(&payload.thread_id)
-        .map(|entry| entry.value().clone())
-        .ok_or(ApiError::ThreadNotActivated)?;
-    generation.cancellation_token.cancel();
+    state
+        .runtime()
+        .cancel_generation(payload.thread_id)
+        .map_err(ApiError::from)?;
     ApiResponse::ok(())
 }

@@ -69,6 +69,23 @@ impl ApiError {
     }
 }
 
+impl From<crate::runtime::RuntimeError> for ApiError {
+    fn from(error: crate::runtime::RuntimeError) -> Self {
+        match error {
+            crate::runtime::RuntimeError::ThreadGenerating => Self::ThreadGenerating,
+            crate::runtime::RuntimeError::ThreadNotActivated => Self::ThreadNotActivated,
+            crate::runtime::RuntimeError::ThreadAlreadyActivated => Self::ThreadAlreadyActivated,
+            crate::runtime::RuntimeError::ItemNotFound(item)
+            | crate::runtime::RuntimeError::ModelNotFound(item) => Self::ItemNotFound(item),
+            crate::runtime::RuntimeError::Database(error) => Self::DatabaseError(error),
+            crate::runtime::RuntimeError::GenerationNotFound(thread_id) => {
+                Self::ItemNotFound(format!("active generation for thread {thread_id}"))
+            }
+            crate::runtime::RuntimeError::Other(error) => Self::Internal(error),
+        }
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         error!("Failed while handling api request: {}", self);

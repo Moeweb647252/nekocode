@@ -6,13 +6,14 @@ pub struct GetWorkspace {
 }
 
 pub async fn get_workspace(
-    State(mut state): State<AppState>,
+    State(state): State<AppState>,
     Json(payload): Json<GetWorkspace>,
 ) -> ApiResult {
+    let mut db = state.db();
     let ws = toasty::query!(Workspace FILTER .id == #(payload.id))
         .include(Workspace::fields().threads())
         .first()
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await?
         .ok_or(ApiError::ItemNotFound(format!(
             "Workspace not found: {}",

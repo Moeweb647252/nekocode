@@ -35,13 +35,12 @@ impl Tool for AbortSubagentTool {
 
     async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let agent_id = parse_agent_id(&params)?;
-        if !self.ctx.registry.contains(agent_id) {
+        if !self.ctx.registry.abort(agent_id).await {
             return Err(ToolError::ExecutionError(format!(
                 "agent {} not found",
                 agent_id
             )));
         }
-        self.ctx.registry.abort(agent_id).await;
         Ok(serde_json::json!({
             "agent_id": agent_id,
             "aborted": true,

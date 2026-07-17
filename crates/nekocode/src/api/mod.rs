@@ -66,11 +66,12 @@ impl IntoResponse for ApiResponse {
 }
 
 pub(crate) async fn auth_middleware_inner(
-    mut state: AppState,
+    state: AppState,
     headers: &axum::http::HeaderMap,
 ) -> Result<bool, ApiError> {
     let config = {
-        let lock = state.config.read().await;
+        let config = state.config();
+        let lock = config.read().await;
         lock.auth.clone()
     };
     if config == AuthenticationConfig::None {
@@ -94,15 +95,16 @@ pub(crate) async fn auth_middleware_inner(
             .filter(|value| !value.is_empty())
             .ok_or(ApiError::Unauthorized)?,
     };
+    let mut db = state.db();
     if let Some(token) = toasty::query!(Token FILTER .token == #token)
         .first()
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await?
     {
         if token.expires_at > jiff::Timestamp::now() {
             Ok(true)
         } else {
-            token.delete().exec(&mut state.db).await?;
+            token.delete().exec(&mut db).await?;
             Ok(false)
         }
     } else {

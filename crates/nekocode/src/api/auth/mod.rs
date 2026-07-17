@@ -14,23 +14,25 @@ pub enum Auth {
     Password { password: String },
 }
 
-pub async fn auth(State(mut state): State<AppState>, Json(payload): Json<Auth>) -> ApiResult {
+pub async fn auth(State(state): State<AppState>, Json(payload): Json<Auth>) -> ApiResult {
     match payload {
         Auth::Password {
             password: payload_password,
         } => {
             if let AuthenticationConfig::Password { password } = {
-                let lock = state.config.read().await;
+                let config = state.config();
+                let lock = config.read().await;
                 lock.auth.clone()
             } {
                 // Constant-time comparison to prevent timing side-channel attacks.
                 if constant_time_eq(password.as_bytes(), payload_password.as_bytes()) {
+                    let mut db = state.db();
                     let token = toasty::create!(Token {
                         token: uuid::Uuid::new_v4().to_string(),
                         expires_at: jiff::Timestamp::now()
                             + jiff::SignedDuration::from_hours(24 * 30),
                     })
-                    .exec(&mut state.db)
+                    .exec(&mut db)
                     .await?;
                     ApiResponse::ok(token)
                 } else {
@@ -51,9 +53,7 @@ mod tests {
     use nekocode_entities::prepare_db;
     use nekocode_types::config::Config;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use tokio::sync::RwLock;
 
     static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -72,13 +72,7 @@ mod tests {
             auth,
             ..Default::default()
         };
-        AppState {
-            db,
-            config: Arc::new(RwLock::new(config)),
-            generate_states: Arc::new(dashmap::DashMap::new()),
-            active_threads: Arc::new(dashmap::DashMap::new()),
-            thread_lifecycle: Arc::new(tokio::sync::Mutex::new(())),
-        }
+        AppState::new(db, config)
     }
 
     // ── auth_middleware_inner tests ──
@@ -104,15 +98,16 @@ mod tests {
 
     #[tokio::test]
     async fn auth_valid_token_passes() {
-        let mut state = test_state(AuthenticationConfig::Password {
+        let state = test_state(AuthenticationConfig::Password {
             password: "pwd".into(),
         })
         .await;
+        let mut db = state.db();
         let token = toasty::create!(Token {
             token: uuid::Uuid::new_v4().to_string(),
             expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1),
         })
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await
         .unwrap();
         let mut headers = HeaderMap::new();
@@ -123,15 +118,16 @@ mod tests {
 
     #[tokio::test]
     async fn auth_websocket_subprotocol_token_passes() {
-        let mut state = test_state(AuthenticationConfig::Password {
+        let state = test_state(AuthenticationConfig::Password {
             password: "pwd".into(),
         })
         .await;
+        let mut db = state.db();
         let token = toasty::create!(Token {
             token: uuid::Uuid::new_v4().to_string(),
             expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1),
         })
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await
         .unwrap();
         let mut headers = HeaderMap::new();
@@ -146,15 +142,16 @@ mod tests {
 
     #[tokio::test]
     async fn auth_expired_token_fails() {
-        let mut state = test_state(AuthenticationConfig::Password {
+        let state = test_state(AuthenticationConfig::Password {
             password: "pwd".into(),
         })
         .await;
+        let mut db = state.db();
         let token = toasty::create!(Token {
             token: uuid::Uuid::new_v4().to_string(),
             expires_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1),
         })
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await
         .unwrap();
         let mut headers = HeaderMap::new();

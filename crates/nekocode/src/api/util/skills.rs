@@ -22,7 +22,8 @@ pub struct SkillInfo {
 /// GET /api/util/skills — list all available skills (builtin + user).
 pub async fn list_skills(State(state): State<AppState>) -> ApiResult {
     let skills_dir = {
-        let config = state.config.read().await;
+        let config = state.config();
+        let config = config.read().await;
         PathBuf::from(config.skills.directory.clone())
     };
     let skills = nekocode_skills::probe_skills(skills_dir).await;

@@ -2,18 +2,13 @@ use nekocode_core::extensions::Extensions;
 use nekocode_core::middleware::{Middleware, MiddlewareSpec};
 use nekocode_subagent::SubagentMiddlewareFactory;
 
-/// API-layer implementation of `SubagentMiddlewareFactory`. Builds isolated
-/// child middleware instances by name + config — the match arms mirror
-/// `build_middlewares`, but each instance is constructed with the child's
-/// `subagent_id` and the child's fresh `extensions` (so shell gets its own
-/// session map, file's thread_id is the synthetic subagent id).
 #[derive(Clone)]
-pub struct ApiSubagentMiddlewareFactory {
-    pub skills_dir: std::path::PathBuf,
+pub(crate) struct RuntimeSubagentMiddlewareFactory {
+    pub(crate) skills_dir: std::path::PathBuf,
 }
 
 #[async_trait::async_trait]
-impl SubagentMiddlewareFactory for ApiSubagentMiddlewareFactory {
+impl SubagentMiddlewareFactory for RuntimeSubagentMiddlewareFactory {
     fn build(
         &self,
         spec: MiddlewareSpec,
@@ -44,6 +39,7 @@ impl SubagentMiddlewareFactory for ApiSubagentMiddlewareFactory {
 }
 
 struct NoopMiddleware;
+
 #[async_trait::async_trait]
 impl Middleware for NoopMiddleware {
     async fn before_generate(

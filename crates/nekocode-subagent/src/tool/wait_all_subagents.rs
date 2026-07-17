@@ -3,7 +3,8 @@ use std::time::Duration;
 use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 
 use crate::SubagentContext;
-use crate::tool::{notification_futures, notify_any, parse_timeout, run_state_name};
+use crate::registry::WaitAllOutcome;
+use crate::tool::parse_timeout;
 
 /// The `wait_all_subagents` tool: blocks until every listed subagent (or, with
 /// no ids, all currently-running ones) reaches a terminal state, or until the
@@ -56,68 +57,35 @@ impl Tool for WaitAllSubagentsTool {
                     .collect();
                 v?
             }
-            None => self
-                .ctx
-                .registry
-                .all_agent_ids()
-                .into_iter()
-                .filter(|id| {
-                    matches!(
-                        self.ctx.registry.run_state(*id),
-                        crate::registry::SubagentRunState::Running
-                    )
-                })
-                .collect(),
+            None => self.ctx.registry.running_agent_ids(),
         };
-        if ids.is_empty() {
-            return Ok(serde_json::json!({ "status": "ready", "results": [] }));
-        }
-        for id in &ids {
-            if !self.ctx.registry.contains(*id) {
-                return Err(ToolError::ExecutionError(format!("agent {} not found", id)));
-            }
-        }
-
-        let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(timeout_secs);
-        loop {
-            let notifications =
-                notification_futures(ids.iter().filter_map(|id| self.ctx.registry.notify(*id)));
-            let (ready, pending): (Vec<u64>, Vec<u64>) = ids
-                .iter()
-                .partition(|id| self.ctx.registry.run_state(**id).is_ready());
-            if pending.is_empty() {
-                let results: Vec<serde_json::Value> = ready
-                    .iter()
-                    .map(|id| {
+        match self
+            .ctx
+            .registry
+            .wait_all(&ids, Duration::from_secs_f64(timeout_secs))
+            .await
+            .map_err(|error| ToolError::ExecutionError(error.to_string()))?
+        {
+            WaitAllOutcome::Ready { results } => {
+                let results: Vec<_> = results
+                    .into_iter()
+                    .map(|(agent_id, snapshot)| {
                         serde_json::json!({
-                            "agent_id": id,
-                            "run_state": run_state_name(&self.ctx.registry.run_state(*id)),
+                            "agent_id": agent_id,
+                            "run_state": snapshot.name(),
                         })
                     })
                     .collect();
-                return Ok(serde_json::json!({
+                Ok(serde_json::json!({
                     "status": "ready",
                     "results": results,
-                }));
+                }))
             }
-            let now = tokio::time::Instant::now();
-            if now >= deadline {
-                return Ok(serde_json::json!({
-                    "status": "timeout",
-                    "ready": ready,
-                    "pending": pending,
-                }));
-            }
-            let sleep = tokio::time::sleep_until(deadline);
-            tokio::pin!(sleep);
-            if notifications.is_empty() {
-                (&mut sleep).await;
-            } else {
-                tokio::select! {
-                    _ = sleep => {}
-                    _ = notify_any(notifications) => {}
-                }
-            }
+            WaitAllOutcome::Timeout { ready, pending } => Ok(serde_json::json!({
+                "status": "timeout",
+                "ready": ready,
+                "pending": pending,
+            })),
         }
     }
 }

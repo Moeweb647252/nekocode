@@ -11,15 +11,16 @@ pub struct CreateWorkspace {
 /// unique per directory, so re-creating for the same path returns the existing
 /// row rather than producing a duplicate.
 pub async fn create_workspace(
-    State(mut state): State<AppState>,
+    State(state): State<AppState>,
     Json(payload): Json<CreateWorkspace>,
 ) -> ApiResult {
+    let mut db = state.db();
     // The toasty query interpolation moves the value, so query against a clone
     // and reserve the original for the create below.
     let lookup = payload.working_directory.clone();
     if let Some(existing) = toasty::query!(Workspace FILTER .working_directory == #(lookup))
         .first()
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await?
     {
         return ApiResponse::ok(existing);
@@ -29,7 +30,7 @@ pub async fn create_workspace(
         working_directory: payload.working_directory,
         name: payload.name,
     })
-    .exec(&mut state.db)
+    .exec(&mut db)
     .await;
     let workspace = match created {
         Ok(workspace) => workspace,
@@ -37,7 +38,7 @@ pub async fn create_workspace(
             if let Some(existing) =
                 toasty::query!(Workspace FILTER .working_directory == #(create_key))
                     .first()
-                    .exec(&mut state.db)
+                    .exec(&mut db)
                     .await?
             {
                 existing

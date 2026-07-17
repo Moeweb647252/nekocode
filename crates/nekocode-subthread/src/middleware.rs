@@ -6,7 +6,7 @@ use nekocode_types::tool::ToolRegistry;
 
 use crate::{
     SubthreadConfig, SubthreadRegistry,
-    controller::ThreadController,
+    controller::SubthreadController,
     tool::{
         DeleteSubthreadTool, InspectSubthreadTool, ListSubthreadsTool, ReadSubthreadTool,
         SetSubthreadSettingsTool, SpawnSubthreadTool, StartSubthreadTool, SubthreadContext,
@@ -33,7 +33,7 @@ impl SubthreadMiddleware {
         parent_thread_id: u64,
         parent_working_directory: String,
         config: SubthreadConfig,
-        controller: Arc<dyn ThreadController>,
+        controller: Arc<dyn SubthreadController>,
     ) -> Self {
         let registry = Arc::new(SubthreadRegistry::new());
         // Publish the registry to the agent's extensions so the API layer can

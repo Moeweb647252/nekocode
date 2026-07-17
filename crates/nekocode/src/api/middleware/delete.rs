@@ -10,31 +10,33 @@ pub struct DeleteMiddleware {
 /// After deletion, the cached agent is evicted so the next activation reflects
 /// the updated middleware list.
 pub async fn delete_middleware(
-    State(mut state): State<AppState>,
+    State(state): State<AppState>,
     Json(payload): Json<DeleteMiddleware>,
 ) -> ApiResult {
-    let _lifecycle = state.thread_lifecycle.lock().await;
+    let runtime = state.runtime();
+    let lifecycle = runtime.lifecycle_guard().await;
+    let mut db = state.db();
     // Look up the middleware's thread_id for the generating check + evict.
     let mw = toasty::query!(Middleware FILTER .id == #(payload.id))
         .first()
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await?
         .ok_or(ApiError::ItemNotFound(format!(
             "Middleware not found: {}",
             payload.id
         )))?;
 
-    if state.generate_states.contains_key(&mw.thread_id) {
-        return Err(ApiError::ThreadGenerating);
-    }
+    lifecycle
+        .ensure_idle(mw.thread_id)
+        .map_err(ApiError::from)?;
 
     toasty::query!(Middleware FILTER .id == #(payload.id))
         .delete()
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await?;
 
     // Evict the cached agent so the next activation picks up the change.
-    crate::api::thread::shutdown_and_remove_agent(&state.active_threads, mw.thread_id).await;
+    lifecycle.remove_and_shutdown(mw.thread_id).await;
 
     ApiResponse::ok(())
 }

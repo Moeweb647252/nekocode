@@ -1,59 +1,14 @@
 mod cancel;
 mod stream_generate;
-pub(super) mod turn_io;
 mod watch_stream;
 
 use nekocode_core::agent::AgentEvent;
 use serde::Serialize;
-use std::sync::Arc;
 
 use crate::AppState;
+use crate::runtime::generation::{GenerationEvent, GenerationSubscription, GenerationTerminal};
 
-pub type ThreadId = u64;
-
-pub struct GenerateState {
-    pub deltas: boxcar::Vec<AgentEvent>,
-    pub broadcast: tokio::sync::broadcast::Sender<AgentEvent>,
-    pub cancellation_token: tokio_util::sync::CancellationToken,
-    terminal: tokio::sync::watch::Sender<Option<StopReason>>,
-}
-
-impl GenerateState {
-    pub fn new() -> Arc<Self> {
-        Self::with_cancellation(tokio_util::sync::CancellationToken::new())
-    }
-
-    pub fn with_cancellation(cancellation_token: tokio_util::sync::CancellationToken) -> Arc<Self> {
-        let (broadcast, _) = tokio::sync::broadcast::channel(100);
-        let (terminal, _) = tokio::sync::watch::channel(None);
-        Arc::new(Self {
-            deltas: boxcar::Vec::new(),
-            broadcast,
-            cancellation_token,
-            terminal,
-        })
-    }
-
-    pub fn publish(&self, event: AgentEvent) {
-        self.deltas.push(event.clone());
-        let _ = self.broadcast.send(event);
-    }
-
-    pub fn finish(&self, stop: StopReason) {
-        let _ = self.terminal.send_if_modified(|current| {
-            if current.is_some() {
-                false
-            } else {
-                *current = Some(stop);
-                true
-            }
-        });
-    }
-
-    pub fn terminal(&self) -> tokio::sync::watch::Receiver<Option<StopReason>> {
-        self.terminal.subscribe()
-    }
-}
+pub(crate) type ThreadId = u64;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -102,6 +57,55 @@ pub(super) async fn send_terminal(socket: &mut axum::extract::ws::WebSocket, sto
         .await;
 }
 
+pub(super) async fn forward_subscription(
+    socket: &mut axum::extract::ws::WebSocket,
+    subscription: &mut GenerationSubscription,
+) -> anyhow::Result<()> {
+    loop {
+        match subscription.next().await {
+            GenerationEvent::Delta(event) => {
+                let payload = serde_json::to_string(&WebSocketEvent::Delta(event))?;
+                // A disconnected subscriber is intentionally just dropped.
+                // The generation lease remains owned by its detached runtime task.
+                if socket
+                    .send(axum::extract::ws::Message::Text(payload.into()))
+                    .await
+                    .is_err()
+                {
+                    return Ok(());
+                }
+            }
+            GenerationEvent::Terminal(terminal) => {
+                send_terminal(socket, terminal.into_stop_reason()).await;
+                return Ok(());
+            }
+        }
+    }
+}
+
+trait IntoStopReason {
+    fn into_stop_reason(self) -> StopReason;
+}
+
+impl IntoStopReason for GenerationTerminal {
+    fn into_stop_reason(self) -> StopReason {
+        match self {
+            GenerationTerminal::Finished(usage) => StopReason {
+                reason: Reason::Finished,
+                detail: serde_json::to_value(usage).unwrap_or(serde_json::Value::Null),
+            },
+            GenerationTerminal::Interrupted => StopReason {
+                reason: Reason::Interrupted,
+                detail: serde_json::Value::Null,
+            },
+            GenerationTerminal::Error(error) => StopReason {
+                reason: Reason::Error,
+                detail: error.into(),
+            },
+        }
+    }
+}
+
 pub fn router() -> axum::Router<AppState> {
     axum::Router::new()
         .route(
@@ -113,26 +117,4 @@ pub fn router() -> axum::Router<AppState> {
             axum::routing::any(watch_stream::watch_stream),
         )
         .route("/cancel", axum::routing::post(cancel::cancel_generation))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn terminal_result_is_written_once() {
-        let state = GenerateState::new();
-        state.finish(StopReason {
-            reason: Reason::Interrupted,
-            detail: serde_json::Value::Null,
-        });
-        state.finish(StopReason {
-            reason: Reason::Finished,
-            detail: serde_json::json!({ "unexpected": true }),
-        });
-
-        let terminal = state.terminal();
-        let value = terminal.borrow().clone().expect("terminal result");
-        assert!(matches!(value.reason, Reason::Interrupted));
-    }
 }

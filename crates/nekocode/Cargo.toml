@@ -25,7 +25,6 @@ uuid.workspace = true
 dashmap.workspace = true
 axum.workspace = true
 clap.workspace = true
-boxcar.workspace = true
 dirs.workspace = true
 toml.workspace = true
 tokio-util.workspace = true

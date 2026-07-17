@@ -10,6 +10,7 @@ use nekocode_core::middleware::{Middleware, MiddlewareSpec};
 use nekocode_core::provider::{Provider, ProviderError, ProviderEvent, ProviderResponse};
 use nekocode_subagent::{
     ProfileCatalog, SubagentContext, SubagentMiddlewareFactory, SubagentProfile, SubagentRegistry,
+    SubagentRunOutcome, SubagentRunResult, SubagentSnapshot,
     tool::{
         AbortSubagentTool, InspectSubagentTool, ReadSubagentTool, SpawnSubagentTool,
         WaitAnySubagentTool,
@@ -411,17 +412,26 @@ async fn spawn_subagent_relays_child_events_as_middleware_event() {
 #[tokio::test]
 async fn abort_all_and_clear_cancels_child_token() {
     let registry = Arc::new(SubagentRegistry::new());
-    let id = registry.allocate_running();
-    let cancel = registry
-        .cancel_token(id)
-        .expect("token present while running");
-    assert!(!cancel.is_cancelled());
+    let (cancelled_tx, cancelled_rx) = tokio::sync::oneshot::channel();
+    let id = registry
+        .spawn(move |task| async move {
+            task.cancel.cancelled().await;
+            let _ = cancelled_tx.send(());
+            SubagentRunOutcome::Error {
+                error: "cancelled".into(),
+                partial: SubagentRunResult {
+                    usage: Usage::default(),
+                    messages: Vec::new(),
+                    finished: false,
+                },
+            }
+        })
+        .unwrap();
     let aborted = registry.abort_all_and_clear().await;
     assert_eq!(aborted, vec![id]);
-    assert!(
-        cancel.is_cancelled(),
-        "cancel token fired by abort_all_and_clear"
-    );
+    cancelled_rx
+        .await
+        .expect("cancel token fired by abort_all_and_clear");
 }
 
 #[tokio::test]
@@ -442,18 +452,17 @@ async fn on_turn_end_aborts_running_subagent() {
         .await
         .unwrap();
     let agent_id = res.get("agent_id").unwrap().as_u64().unwrap();
-    assert_eq!(
-        ctx.registry.run_state(agent_id),
-        nekocode_subagent::SubagentRunState::Running
-    );
+    assert!(matches!(
+        ctx.registry.snapshot(agent_id),
+        Some(SubagentSnapshot::Running)
+    ));
 
     // Parent turn ends:
     mw.on_turn_end().await.unwrap();
 
     // The never-completing subagent must be gone from the registry.
-    assert_eq!(
-        ctx.registry.run_state(agent_id),
-        nekocode_subagent::SubagentRunState::Idle,
+    assert!(
+        ctx.registry.snapshot(agent_id).is_none(),
         "subagent evicted by on_turn_end"
     );
 }

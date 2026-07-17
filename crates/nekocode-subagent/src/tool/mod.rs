@@ -1,7 +1,5 @@
 use nekocode_types::tool::ToolError;
 
-use crate::registry::SubagentRunState;
-
 pub mod abort_subagent;
 pub mod inspect_subagent;
 pub mod read_subagent;
@@ -62,31 +60,4 @@ pub(crate) fn parse_timeout(params: &serde_json::Value) -> Result<f64, ToolError
         ));
     }
     Ok(t)
-}
-
-/// Lowercase state name for JSON results.
-pub(crate) fn run_state_name(s: &SubagentRunState) -> &'static str {
-    s.name()
-}
-
-/// Await any one of the given Notify handles. Mirrors nekocode-subthread's
-/// notify_any helper (duplicated per the no-cross-crate-sharing guideline).
-pub(crate) type NotificationFuture =
-    std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
-
-pub(crate) fn notification_futures(
-    notifies: impl Iterator<Item = std::sync::Arc<tokio::sync::Notify>>,
-) -> Vec<NotificationFuture> {
-    notifies
-        .map(|notify| Box::pin(notify.notified_owned()) as NotificationFuture)
-        .collect()
-}
-
-pub(crate) async fn notify_any(notifications: Vec<NotificationFuture>) {
-    use futures_util::future::select_all;
-    if notifications.is_empty() {
-        std::future::pending::<()>().await;
-        return;
-    }
-    let _ = select_all(notifications).await;
 }

@@ -3,9 +3,8 @@ use std::time::Duration;
 use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 
 use crate::SubagentContext;
-use crate::tool::{
-    notification_futures, notify_any, parse_agent_ids, parse_timeout, run_state_name,
-};
+use crate::registry::WaitAnyOutcome;
+use crate::tool::{parse_agent_ids, parse_timeout};
 
 /// The `wait_any_subagent` tool: blocks until any one of the listed subagents
 /// reaches a terminal state (returning that one) or the timeout elapses
@@ -45,43 +44,22 @@ impl Tool for WaitAnySubagentTool {
     async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let ids = parse_agent_ids(&params)?;
         let timeout_secs = parse_timeout(&params)?;
-        for id in &ids {
-            if !self.ctx.registry.contains(*id) {
-                return Err(ToolError::ExecutionError(format!("agent {} not found", id)));
-            }
-        }
-
-        let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(timeout_secs);
-        loop {
-            let notifications =
-                notification_futures(ids.iter().filter_map(|id| self.ctx.registry.notify(*id)));
-            for id in &ids {
-                let state = self.ctx.registry.run_state(*id);
-                if state.is_ready() {
-                    return Ok(serde_json::json!({
-                        "status": "ready",
-                        "agent_id": id,
-                        "run_state": run_state_name(&state),
-                    }));
-                }
-            }
-            let now = tokio::time::Instant::now();
-            if now >= deadline {
-                return Ok(serde_json::json!({
-                    "status": "timeout",
-                    "pending": ids,
-                }));
-            }
-            let sleep = tokio::time::sleep_until(deadline);
-            tokio::pin!(sleep);
-            if notifications.is_empty() {
-                (&mut sleep).await;
-            } else {
-                tokio::select! {
-                    _ = sleep => {}
-                    _ = notify_any(notifications) => {}
-                }
-            }
+        match self
+            .ctx
+            .registry
+            .wait_any(&ids, Duration::from_secs_f64(timeout_secs))
+            .await
+            .map_err(|error| ToolError::ExecutionError(error.to_string()))?
+        {
+            WaitAnyOutcome::Ready { agent_id, snapshot } => Ok(serde_json::json!({
+                "status": "ready",
+                "agent_id": agent_id,
+                "run_state": snapshot.name(),
+            })),
+            WaitAnyOutcome::Timeout { pending } => Ok(serde_json::json!({
+                "status": "timeout",
+                "pending": pending,
+            })),
         }
     }
 }

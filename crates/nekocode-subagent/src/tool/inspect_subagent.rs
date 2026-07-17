@@ -1,7 +1,7 @@
 use nekocode_types::tool::{Tool, ToolError, ToolSpec};
 
 use crate::SubagentContext;
-use crate::tool::{parse_agent_id, run_state_name};
+use crate::tool::parse_agent_id;
 
 /// The `inspect_subagent` tool: polls a subagent's current run state
 /// (running/finished/error) and surfaces the error message when it errored.
@@ -35,19 +35,16 @@ impl Tool for InspectSubagentTool {
 
     async fn call(&self, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         let agent_id = parse_agent_id(&params)?;
-        if !self.ctx.registry.contains(agent_id) {
-            return Err(ToolError::ExecutionError(format!(
-                "agent {} not found",
-                agent_id
-            )));
-        }
-        let state = self.ctx.registry.run_state(agent_id);
+        let snapshot =
+            self.ctx.registry.snapshot(agent_id).ok_or_else(|| {
+                ToolError::ExecutionError(format!("agent {} not found", agent_id))
+            })?;
         let mut out = serde_json::json!({
             "agent_id": agent_id,
-            "status": run_state_name(&state),
+            "status": snapshot.name(),
         });
-        if let crate::registry::SubagentRunState::Error(msg) = &state {
-            out["error"] = serde_json::Value::String(msg.clone());
+        if let Some(error) = snapshot.error() {
+            out["error"] = serde_json::Value::String(error.to_string());
         }
         Ok(out)
     }

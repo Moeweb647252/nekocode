@@ -72,7 +72,8 @@ impl Tool for SpawnSubagentTool {
             .ctx
             .catalog
             .get(profile_name)
-            .map_err(|e| ToolError::InvalidParameters(e.to_string()))?;
+            .map_err(|e| ToolError::InvalidParameters(e.to_string()))?
+            .clone();
 
         // Gate A: the parent's profile must allow nesting.
         if !self.ctx.allow_nested {
@@ -106,110 +107,82 @@ impl Tool for SpawnSubagentTool {
             .cloned()
             .collect();
 
-        let agent_id = self.ctx.registry.allocate_running();
-        let child_cancel = self
-            .ctx
-            .registry
-            .cancel_token(agent_id)
-            .expect("token present right after allocate_running");
-        let child_extensions = Extensions::new();
-
-        // Build isolated middleware instances via the factory.
-        let mut child_middlewares: Vec<Box<dyn nekocode_core::middleware::Middleware>> = Vec::new();
-        for spec in &selected_specs {
-            child_middlewares.push(self.ctx.factory.build(
-                spec.clone(),
-                agent_id,
-                child_extensions.clone(),
-            ));
-        }
-
-        // Compute the child's working directory BEFORE building the child
-        // middleware: a profile may override `working_directory`, and the
-        // child's ProfileCatalog must load relative to the child's directory,
-        // not the parent's.
-        let working_directory = profile
-            .working_directory
-            .clone()
-            .unwrap_or_else(|| self.ctx.parent_working_directory.clone());
-
-        // Construct the child's own SubagentMiddleware (at depth+1, with the
-        // child profile's allow_nested). It registers the subagent tools for
-        // the child so it can itself spawn (subject to the gates above).
-        // Pass `selected_specs` (parent specs ∩ profile.middlewares), NOT the
-        // parent's full spec set, so the intersection gate holds at depth >= 2;
-        // and pass the computed `working_directory` so the child catalog loads
-        // from the right place.
-        let run_cancel = self
-            .ctx
-            .run_cancel
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        let child_subagent_mw = SubagentMiddleware::new(
-            selected_specs.clone(),
-            self.ctx.factory.clone(),
-            self.ctx.parent_provider.clone(),
-            child_extensions.clone(),
-            self.ctx.parent_db.clone(),
-            working_directory.clone(),
-            crate::SubagentConfig {
-                max_depth: self.ctx.max_depth,
-            },
-            self.ctx.depth + 1,
-            profile.allow_nested,
-        )
-        // Re-point the child's run_cancel at the parent's so the whole spawn
-        // tree shares one cancellation flag: the root's on_turn_end cancels
-        // it once and every descendant run_subagent bails concurrently.
-        .with_run_cancel(run_cancel.clone());
-        child_middlewares.push(Box::new(child_subagent_mw));
-
-        let child = Agent {
-            thread_id: agent_id,
-            working_directory,
-            db: self.ctx.parent_db.clone(),
-            middlewares: Arc::new(child_middlewares),
-            provider: self.ctx.parent_provider.clone(),
-            extensions: child_extensions,
-        };
-
-        // Relay pattern: a companion task wraps each child AgentEvent as a
-        // MiddlewareEvent and forwards it to the parent's mev_tx (which
-        // run_loop's merge relay turns into a uniquely-indexed AgentEvent on
-        // the parent stream). Replaces the old drain-and-discard task.
-        let (child_tx, mut child_rx) = mpsc::unbounded_channel();
+        let ctx = self.ctx.clone();
         let mev_tx = self.mev_tx.clone();
-        let relay_target_agent_id = agent_id;
         let registry = self.ctx.registry.clone();
-        let handle = tokio::spawn(async move {
-            let relay = tokio::spawn(async move {
-                while let Some(child_event) = child_rx.recv().await {
-                    let mev = nekocode_core::agent::MiddlewareEvent {
-                        source: std::borrow::Cow::Borrowed("subagent"),
-                        source_id: relay_target_agent_id,
-                        event_type: "agentEvent".into(),
-                        data: serde_json::to_value(&child_event).unwrap_or(serde_json::Value::Null),
-                    };
-                    // Parent stream may have closed: send failure just stops relaying.
-                    let _ = mev_tx.send(mev);
-                }
-            });
-            run_subagent(
-                agent_id,
-                child,
-                prompt,
-                registry,
-                nekocode_core::agent::AgentEventSink::new(child_tx),
-                (*child_cancel).clone(),
-                run_cancel,
-            )
-            .await;
-            // run_subagent returns → child run_loop dropped child_tx → relay ends.
-            relay.await.ok();
-        });
+        let agent_id = registry
+            .spawn(move |task| {
+                let agent_id = task.agent_id;
+                let child_extensions = Extensions::new();
+                let mut child_middlewares: Vec<Box<dyn nekocode_core::middleware::Middleware>> =
+                    selected_specs
+                        .iter()
+                        .map(|spec| {
+                            ctx.factory
+                                .build(spec.clone(), agent_id, child_extensions.clone())
+                        })
+                        .collect();
 
-        self.ctx.registry.set_running(agent_id, handle);
+                let working_directory = profile
+                    .working_directory
+                    .clone()
+                    .unwrap_or_else(|| ctx.parent_working_directory.clone());
+                let run_cancel = ctx
+                    .run_cancel
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .clone();
+                let child_subagent_mw = SubagentMiddleware::new(
+                    selected_specs,
+                    ctx.factory.clone(),
+                    ctx.parent_provider.clone(),
+                    child_extensions.clone(),
+                    ctx.parent_db.clone(),
+                    working_directory.clone(),
+                    crate::SubagentConfig {
+                        max_depth: ctx.max_depth,
+                    },
+                    ctx.depth + 1,
+                    profile.allow_nested,
+                )
+                .with_run_cancel(run_cancel.clone());
+                child_middlewares.push(Box::new(child_subagent_mw));
+
+                let child = Agent {
+                    thread_id: agent_id,
+                    working_directory,
+                    db: ctx.parent_db.clone(),
+                    middlewares: Arc::new(child_middlewares),
+                    provider: ctx.parent_provider.clone(),
+                    extensions: child_extensions,
+                };
+                let (child_tx, mut child_rx) = mpsc::unbounded_channel();
+                async move {
+                    let relay = tokio::spawn(async move {
+                        while let Some(child_event) = child_rx.recv().await {
+                            let event = nekocode_core::agent::MiddlewareEvent {
+                                source: std::borrow::Cow::Borrowed("subagent"),
+                                source_id: agent_id,
+                                event_type: "agentEvent".into(),
+                                data: serde_json::to_value(&child_event)
+                                    .unwrap_or(serde_json::Value::Null),
+                            };
+                            let _ = mev_tx.send(event);
+                        }
+                    });
+                    let outcome = run_subagent(
+                        child,
+                        prompt,
+                        nekocode_core::agent::AgentEventSink::new(child_tx),
+                        task.cancel,
+                        run_cancel,
+                    )
+                    .await;
+                    let _ = relay.await;
+                    outcome
+                }
+            })
+            .map_err(|error| ToolError::ExecutionError(error.to_string()))?;
 
         Ok(serde_json::json!({
             "agent_id": agent_id,

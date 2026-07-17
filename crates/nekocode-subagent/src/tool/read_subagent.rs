@@ -42,43 +42,40 @@ impl Tool for ReadSubagentTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        if !self.ctx.registry.contains(agent_id) {
-            return Err(ToolError::ExecutionError(format!(
-                "agent {} not found",
-                agent_id
-            )));
-        }
-        let state = self.ctx.registry.run_state(agent_id);
-        if !state.is_ready() {
+        let snapshot =
+            self.ctx.registry.snapshot(agent_id).ok_or_else(|| {
+                ToolError::ExecutionError(format!("agent {} not found", agent_id))
+            })?;
+        if !snapshot.is_ready() {
             return Err(ToolError::ExecutionError(format!(
                 "agent {} is not ready (state: {})",
                 agent_id,
-                state.name()
+                snapshot.name()
             )));
         }
-        let result = self.ctx.registry.result(agent_id).ok_or_else(|| {
-            ToolError::ExecutionError(format!("agent {} has no result", agent_id))
-        })?;
+        let result = snapshot
+            .result()
+            .expect("ready snapshots always contain a result");
 
         let mut out = if text_only {
             let text = last_assistant_text(&result.messages).unwrap_or_default();
             serde_json::json!({
                 "agent_id": agent_id,
-                "status": state.name(),
+                "status": snapshot.name(),
                 "text": text,
             })
         } else {
             serde_json::json!({
                 "agent_id": agent_id,
-                "status": state.name(),
-                "messages": result.messages,
+                "status": snapshot.name(),
+                "messages": &result.messages,
             })
         };
         // Mirror inspect_subagent: surface the error message when the subagent
         // errored. In text_only mode there is no assistant message on error, so
         // without this the failure would be invisible to the model.
-        if let crate::registry::SubagentRunState::Error(msg) = &state {
-            out["error"] = serde_json::Value::String(msg.clone());
+        if let Some(error) = snapshot.error() {
+            out["error"] = serde_json::Value::String(error.to_string());
         }
         Ok(out)
     }

@@ -20,26 +20,27 @@ pub struct MiddlewareResponse {
 /// Create a new middleware attached to a thread. Defaults to enabled. Thread
 /// creation seeds Shell/Tool; this endpoint is used to add Mcp instances.
 pub async fn create_middleware(
-    State(mut state): State<AppState>,
+    State(state): State<AppState>,
     Json(payload): Json<CreateMiddleware>,
 ) -> ApiResult {
-    let _lifecycle = state.thread_lifecycle.lock().await;
+    let runtime = state.runtime();
+    let lifecycle = runtime.lifecycle_guard().await;
+    lifecycle
+        .ensure_idle(payload.thread_id)
+        .map_err(ApiError::from)?;
+    let mut db = state.db();
     let _thread = toasty::query!(Thread FILTER .id == #(payload.thread_id))
         .first()
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await?
         .ok_or(ApiError::ItemNotFound(format!(
             "Thread not found: {}",
             payload.thread_id
         )))?;
 
-    if state.generate_states.contains_key(&payload.thread_id) {
-        return Err(ApiError::ThreadGenerating);
-    }
-
     let next_order_index = toasty::query!(Middleware FILTER .thread_id == #(payload.thread_id) ORDER BY .order_index DESC LIMIT 1)
         .first()
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await?
         .map(|middleware| middleware.order_index.saturating_add(100))
         .unwrap_or(100);
@@ -50,11 +51,11 @@ pub async fn create_middleware(
         name: payload.name,
         config: toasty::Json(payload.config),
     })
-    .exec(&mut state.db)
+    .exec(&mut db)
     .await?;
 
     // Evict the cached agent so the next activation picks up the new middleware.
-    crate::api::thread::shutdown_and_remove_agent(&state.active_threads, payload.thread_id).await;
+    lifecycle.remove_and_shutdown(payload.thread_id).await;
 
     ApiResponse::ok(MiddlewareResponse {
         id: created.id,

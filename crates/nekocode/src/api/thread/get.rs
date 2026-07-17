@@ -35,12 +35,13 @@ pub struct TurnResponse {
 }
 
 pub async fn get_thread(
-    State(mut state): State<AppState>,
+    State(state): State<AppState>,
     Json(payload): Json<GetThread>,
 ) -> ApiResult {
+    let mut db = state.db();
     let thread = toasty::query!(Thread FILTER .id == #(payload.id))
         .first()
-        .exec(&mut state.db)
+        .exec(&mut db)
         .await?;
     if let Some(thread) = thread {
         let turns = if let Some(limit) = payload.turns_limit {
@@ -48,7 +49,7 @@ pub async fn get_thread(
             // client transcript. `ASC LIMIT` would permanently hide recent
             // messages once a thread grew past the requested page size.
             let mut turns = toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .id DESC LIMIT #limit)
-                .exec(&mut state.db)
+                .exec(&mut db)
                 .await?;
             turns.reverse();
             turns
@@ -56,10 +57,10 @@ pub async fn get_thread(
             // No limit requested: return only the latest turn (DESC + LIMIT 1).
             // Previously this was `ASC LIMIT 1`, which returned the *oldest* turn.
             toasty::query!(Turn FILTER .thread_id == #(payload.id) ORDER BY .id DESC LIMIT 1)
-                .exec(&mut state.db)
+                .exec(&mut db)
                 .await?
         };
-        let turns = materialize_turns(&mut state.db, turns).await?;
+        let turns = materialize_turns(&mut db, turns).await?;
         ApiResponse::ok(ThreadResponse {
             id: thread.id,
             title: thread.title,
@@ -67,8 +68,8 @@ pub async fn get_thread(
             model: thread.model,
             updated_at: thread.updated_at,
             created_at: thread.created_at,
-            active: state.active_threads.contains_key(&thread.id),
-            generating: state.generate_states.contains_key(&thread.id),
+            active: state.runtime().is_active(thread.id),
+            generating: state.runtime().is_generating(thread.id),
             turns,
         })
     } else {

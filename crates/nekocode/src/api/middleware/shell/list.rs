@@ -14,16 +14,11 @@ pub async fn list_shells(
     State(state): State<AppState>,
     Json(ListShells { thread_id }): Json<ListShells>,
 ) -> ApiResult {
-    let thread_state = {
-        state
-            .active_threads
-            .get(&thread_id)
-            .ok_or(ApiError::ThreadNotActivated)?
-            .clone()
-    };
+    let thread_state = state
+        .runtime()
+        .active_agent(thread_id)
+        .map_err(ApiError::from)?;
     let shell_states = thread_state
-        .read()
-        .await
         .extensions
         .get::<dashmap::DashMap<u32, ShellTaskState>>()
         .ok_or_else(|| {

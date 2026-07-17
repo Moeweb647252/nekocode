@@ -125,6 +125,7 @@ impl SubagentMiddleware {
 #[async_trait::async_trait]
 impl Middleware for SubagentMiddleware {
     async fn on_turn_start(&self) -> Result<(), anyhow::Error> {
+        self.ctx.registry.begin_turn();
         if self.owns_run_cancel {
             *self
                 .ctx

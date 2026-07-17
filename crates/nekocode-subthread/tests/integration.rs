@@ -2,7 +2,7 @@
 //!
 //! These cover spawn/list/inspect/read/settings and the working-directory
 //! containment rule. `start_subthread` and the wait tools need a live
-//! provider (the real `ThreadController`), so they are covered by a manual
+//! provider (the real `SubthreadController`), so they are covered by a manual
 //! API-layer smoke test rather than here.
 
 use std::sync::Arc;
@@ -11,68 +11,105 @@ use nekocode_core::extensions::Extensions;
 use nekocode_entities::{middleware::Middleware, prepare_db, thread::Thread, workspace::Workspace};
 use nekocode_subthread::{
     SubthreadConfig, SubthreadMiddleware,
-    controller::{ActivationOutcome, ThreadController},
+    controller::{CreateSubthreadRequest, CreatedSubthread, SubthreadController},
 };
 
-/// A no-op controller used only to satisfy the middleware constructor in tests
-/// that don't exercise start_subthread. Its `activate` and `run` are never
-/// called (the integration tests only invoke spawn/list/inspect/read/settings
-/// /delete), but the trait requires a returnable `Agent` for `AlreadyActivated`,
-/// so we hand back a placeholder built against a panic-on-call provider.
+/// A small persisted controller used by tool tests. `run` is deliberately a
+/// no-op; `create` and `delete` exercise the same high-level trait boundary
+/// the server runtime implements.
 ///
-/// `delete_subthread` does real (simplified) DB cascade cleanup so the
+/// `delete` does real (simplified) DB cascade cleanup so the
 /// `delete_subthread` tool test can verify end-to-end behavior without the
 /// full API-layer cascade function (which lives in the `nekocode` crate).
 struct NoopController {
     db: toasty::Db,
 }
 
-struct UnusedProvider;
-
 #[async_trait::async_trait]
-impl nekocode_core::provider::Provider for UnusedProvider {
-    async fn stream_generate(
+impl SubthreadController for NoopController {
+    async fn create(
         &self,
-        _request: nekocode_core::types::GenerateRequest,
-        _sender: tokio::sync::mpsc::UnboundedSender<nekocode_core::provider::ProviderEvent>,
-    ) -> Result<nekocode_core::provider::ProviderResponse, nekocode_core::provider::ProviderError>
-    {
-        panic!("UnusedProvider::stream_generate must not be called in tests")
+        request: CreateSubthreadRequest,
+    ) -> Result<CreatedSubthread, anyhow::Error> {
+        let mut db = self.db.clone();
+        let parent = toasty::query!(Thread FILTER .id == #(request.parent_thread_id))
+            .first()
+            .exec(&mut db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("parent not found"))?;
+        let workspace_id = match parent.workspace_id {
+            Some(id) => id,
+            None => {
+                nekocode_entities::workspace::find_or_create(&mut db, &parent.working_directory)
+                    .await?
+                    .id
+            }
+        };
+        let mut transaction = db.transaction().await?;
+        let child = toasty::create!(Thread {
+            working_directory: request.working_directory.clone(),
+            model: parent.model,
+            workspace_id: Some(workspace_id),
+            own_by_id: Some(request.parent_thread_id),
+        })
+        .exec(&mut transaction)
+        .await?;
+        for (order_index, name, config) in [
+            (
+                100,
+                "shell",
+                serde_json::json!({ "workingDirectory": request.working_directory.clone() }),
+            ),
+            (
+                200,
+                "tool",
+                serde_json::json!({ "workingDirectory": request.working_directory.clone() }),
+            ),
+        ] {
+            toasty::create!(Middleware {
+                thread_id: child.id,
+                order_index,
+                name: name.to_string(),
+                config: toasty::Json(config),
+            })
+            .exec(&mut transaction)
+            .await?;
+        }
+        if request.allow_subthread {
+            toasty::create!(Middleware {
+                thread_id: child.id,
+                order_index: 300,
+                name: "subthread".to_string(),
+                config: toasty::Json(SubthreadConfig::default().to_value()),
+            })
+            .exec(&mut transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+        Ok(CreatedSubthread {
+            subthread_id: child.id,
+            working_directory: request.working_directory,
+            allow_subthread: request.allow_subthread,
+        })
     }
-}
 
-#[async_trait::async_trait]
-impl ThreadController for NoopController {
-    async fn activate(
-        &self,
-        _: u64,
-        _: tokio_util::sync::CancellationToken,
-    ) -> Result<ActivationOutcome, anyhow::Error> {
-        // The variant now carries an Arc<Agent>; we never run this agent in
-        // these tests, so a minimal placeholder is fine.
-        Ok(ActivationOutcome::AlreadyActivated(std::sync::Arc::new(
-            nekocode_core::agent::Agent {
-                thread_id: 0,
-                working_directory: String::new(),
-                db: self.db.clone(),
-                middlewares: std::sync::Arc::new(Vec::new()),
-                provider: std::sync::Arc::new(UnusedProvider),
-                extensions: Extensions::new(),
-            },
-        )))
-    }
-    async fn deactivate(&self, _: u64) {}
     async fn run(
         &self,
-        _: Arc<nekocode_core::agent::Agent>,
+        _: u64,
         _: String,
+        _: tokio_util::sync::CancellationToken,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
-    async fn delete_subthread(&self, subthread_id: u64) -> Result<(), anyhow::Error> {
+
+    async fn invalidate(&self, _: u64) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
+    async fn delete(&self, subthread_id: u64) -> Result<(), anyhow::Error> {
         // Simplified cascade: collect descendants via own_by_id, then delete
         // middleware + thread rows for each. The full API-layer version also
-        // aborts in-flight tasks and evicts active_threads; this test path has
+        // aborts in-flight tasks and evicts runtime caches; this test path has
         // none of those, so DB-only cleanup suffices to prove the tool wires
         // through to the controller.
         let mut db = self.db.clone();

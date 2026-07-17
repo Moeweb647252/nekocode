@@ -3,33 +3,37 @@
 //! Provides the application state and router for integration tests.
 //! The main binary is a thin wrapper that reads config and starts the server.
 
-use std::sync::Arc;
-
 use axum::Router;
-use nekocode_core::agent::Agent;
 use nekocode_types::config::Config;
-use tokio::sync::RwLock;
 
 mod api;
-
-pub use api::generate::{GenerateState, ThreadId};
+mod runtime;
 
 /// Server-wide shared state, cloned and injected into every axum route.
 ///
-/// Holds the DB handle, the config behind a `RwLock`, and two
-/// `ThreadId`-keyed maps: live generation state (for stream replay/abort) and
-/// activated agents. Integration tests build it by hand together with
-/// [`build_router`].
 #[derive(Clone)]
 pub struct AppState {
-    pub db: toasty::Db,
-    pub config: Arc<RwLock<Config>>,
-    pub generate_states: Arc<dashmap::DashMap<ThreadId, Arc<GenerateState>>>,
-    pub active_threads: Arc<dashmap::DashMap<ThreadId, Arc<RwLock<Agent>>>>,
-    /// Serializes run reservation with destructive/configuration operations.
-    /// The lock is held only while establishing or tearing down a thread-level
-    /// invariant; provider generation itself never holds it.
-    pub thread_lifecycle: Arc<tokio::sync::Mutex<()>>,
+    runtime: std::sync::Arc<runtime::ThreadRuntime>,
+}
+
+impl AppState {
+    pub fn new(db: toasty::Db, config: Config) -> Self {
+        Self {
+            runtime: runtime::ThreadRuntime::new(db, config),
+        }
+    }
+
+    pub(crate) fn runtime(&self) -> std::sync::Arc<runtime::ThreadRuntime> {
+        self.runtime.clone()
+    }
+
+    pub(crate) fn db(&self) -> toasty::Db {
+        self.runtime.db()
+    }
+
+    pub(crate) fn config(&self) -> std::sync::Arc<tokio::sync::RwLock<Config>> {
+        self.runtime.config()
+    }
 }
 
 /// Build an axum [`Router`] with all API routes mounted under `/api`.
